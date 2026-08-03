@@ -1,0 +1,781 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Payment } from './entity/payment.entity';
+import { IsNull, Repository } from 'typeorm';
+import { CashStrategy } from './strategy/cash.strategy';
+import { BankTransferStrategy } from './strategy/bank-transfer.strategy';
+import { InjectMapper } from '@automapper/nestjs';
+import { Mapper } from '@automapper/core';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import {
+  CreatePaymentDto,
+  GetSpecificPaymentRequestDto,
+  PaymentResponseDto,
+} from './payment.dto';
+import { Order } from 'src/order/order.entity';
+import { v4 as uuidv4 } from 'uuid';
+import * as _ from 'lodash';
+import { PaymentException } from './payment.exception';
+import { PaymentValidation } from './payment.validation';
+import {
+  PaymentAction,
+  PaymentMethod,
+  PaymentStatus,
+} from './payment.constants';
+import {
+  ACBResponseDto,
+  ACBStatusRequestDto,
+} from 'src/acb-connector/acb-connector.dto';
+import { formatMoment } from 'src/helper';
+import {
+  ACBConnectorStatus,
+  ACBConnectorTransactionStatus,
+} from 'src/acb-connector/acb-connector.constants';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OrderException } from 'src/order/order.exception';
+import { OrderValidation } from 'src/order/order.validation';
+import { OrderStatus } from 'src/order/order.constants';
+import { PdfService } from 'src/pdf/pdf.service';
+import { RoleEnum } from 'src/role/role.enum';
+import { UserUtils } from 'src/user/user.utils';
+import { CurrentUserDto } from 'src/user/user.dto';
+import { PaymentUtils } from './payment.utils';
+import { TransactionManagerService } from 'src/db/transaction-manager.service';
+import { PointStrategy } from './strategy/point.strategy';
+import { VoucherUtils } from 'src/voucher/voucher.utils';
+import {
+  VoucherApplicabilityRule,
+  VoucherType,
+} from 'src/voucher/voucher.constant';
+import { OrderUtils } from 'src/order/order.utils';
+import { OrderItemUtils } from 'src/order-item/order-item.utils';
+import { Voucher } from 'src/voucher/entity/voucher.entity';
+import { VoucherException } from 'src/voucher/voucher.exception';
+import { VoucherValidation } from 'src/voucher/voucher.validation';
+import { CreditCardStrategy } from './strategy/credit-card.strategy';
+import { checkActiveUser, checkUserRequirement } from 'src/auth/auth.utils';
+import { MembershipCard } from 'src/membership-card/membership-card.entity';
+import { MembershipCardException } from 'src/membership-card/membership-card.exception';
+import { MembershipCardValidation } from 'src/membership-card/membership-card.validation';
+import { UserException } from 'src/user/user.exception';
+import { UserValidation } from 'src/user/user.validation';
+import { Printer } from 'src/printer/entity/printer.entity';
+import { PrinterDataType } from 'src/printer/printer.constants';
+import { PrinterConnectorUtils } from 'src/printer-connector/printer-connector.utils';
+import { PrinterUtils } from 'src/printer/printer.utils';
+import { QrPaymentService } from 'src/qr-payment/qr-payment.service';
+import { User } from 'src/user/user.entity';
+
+@Injectable()
+export class PaymentService {
+  constructor(
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+    @InjectRepository(Printer)
+    private readonly printerRepository: Repository<Printer>,
+    @InjectMapper() private readonly mapper: Mapper,
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
+    private readonly logger: Logger,
+    private readonly cashStrategy: CashStrategy,
+    private readonly pointStategy: PointStrategy,
+    private readonly bankTransferStrategy: BankTransferStrategy,
+    private readonly creditCardStrategy: CreditCardStrategy,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly pdfService: PdfService,
+    private readonly userUtils: UserUtils,
+    private readonly paymentUtils: PaymentUtils,
+    private readonly transactionService: TransactionManagerService,
+    private readonly voucherUtils: VoucherUtils,
+    private readonly orderUtils: OrderUtils,
+    private readonly orderItemUtils: OrderItemUtils,
+    @InjectRepository(Voucher)
+    private readonly voucherRepository: Repository<Voucher>,
+    @InjectRepository(MembershipCard)
+    private readonly membershipCardRepository: Repository<MembershipCard>,
+    private readonly printerConnectorUtils: PrinterConnectorUtils,
+    private readonly printerUtils: PrinterUtils,
+    private readonly qrPaymentService: QrPaymentService,
+  ) {}
+
+  async getAll() {
+    const payments = await this.paymentRepository.find({
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    return this.mapper.mapArray(payments, Payment, PaymentResponseDto);
+  }
+
+  async update(slug: string) {
+    const context = `${PaymentService.name}.${this.update.name}`;
+    this.logger.log(`Update payment: ${slug}`, context);
+
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        slug: slug ?? IsNull(),
+      },
+      relations: ['cardOrder'],
+    });
+
+    if (!payment)
+      throw new PaymentException(PaymentValidation.PAYMENT_NOT_FOUND);
+
+    payment.statusCode = PaymentStatus.COMPLETED;
+    payment.message = 'Thanh toan thanh cong';
+
+    const updated = await this.transactionService.execute<Payment>(
+      async (manager) => {
+        return await manager.save(payment);
+      },
+      (res) => {
+        this.logger.log(`Payment ${res.slug} updated`, context);
+      },
+      (error) => {
+        this.logger.error(
+          `Error when updating payment: ${error.message}`,
+          error.stack,
+          context,
+        );
+        throw new PaymentException(PaymentValidation.ERROR_WHEN_UPDATE_PAYEMNT);
+      },
+    );
+
+    this.logger.log(`Updated payment: ${JSON.stringify(updated)}`, context);
+
+    if (updated.cardOrder) {
+      this.eventEmitter.emit(PaymentAction.CARD_ORDER_PAYMENT_PAID, {
+        orderSlug: updated.cardOrder?.slug,
+      });
+    }
+  }
+
+  async exportPayment(slug: string) {
+    const context = `${PaymentService.name}.${this.exportPayment.name}`;
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        slug,
+      },
+      relations: ['order'],
+    });
+    if (!payment) {
+      this.logger.warn(`Payment ${slug} not found`, context);
+      throw new PaymentException(PaymentValidation.PAYMENT_NOT_FOUND);
+    }
+
+    if (payment.paymentMethod !== PaymentMethod.BANK_TRANSFER) {
+      this.logger.warn(`Payment ${slug} is not a bank transfer`, context);
+      throw new PaymentException(
+        PaymentValidation.ONLY_BANK_TRANSFER_CAN_EXPORT,
+      );
+    }
+
+    const data = await this.pdfService.generatePdf('payment', payment, {
+      width: '80mm',
+    });
+
+    this.logger.log(`Payment ${payment.slug} exported`, context);
+
+    return data;
+  }
+
+  /**
+   * Get specific payment
+   * @param {GetSpecificPaymentRequestDto} query
+   * @returns {Promise<PaymentResponseDto>} payment
+   */
+  async getSpecific(
+    query: GetSpecificPaymentRequestDto,
+  ): Promise<PaymentResponseDto> {
+    if (_.isEmpty(query)) {
+      throw new PaymentException(PaymentValidation.PAYMENT_QUERY_INVALID);
+    }
+    const payment = await this.paymentRepository.findOne({
+      where: { transactionId: query.transaction },
+    });
+    return this.mapper.map(payment, Payment, PaymentResponseDto);
+  }
+
+  /**
+   * Initiate payment
+   * @param {CreatePaymentDto} createPaymentDto
+   * @returns {Promise<PaymentResponseDto>} payment
+   */
+  async initiate(
+    createPaymentDto: CreatePaymentDto,
+    currentUser: CurrentUserDto,
+  ): Promise<PaymentResponseDto> {
+    const context = `${PaymentService.name}.${this.initiate.name}`;
+
+    // created by
+    const user = await this.userUtils.getUser({
+      where: { id: currentUser.userId ?? IsNull() },
+      relations: ['role'],
+    });
+    // get order
+    const order = await this.orderUtils.getOrder({
+      where: { slug: createPaymentDto.orderSlug },
+    });
+
+    checkActiveUser(order.owner);
+    checkUserRequirement(order.owner);
+
+    // if order subtotal is less than 2000,
+    // set loss === subtotal
+    // set subtotal === 0
+    // set payment method === CASH
+
+    if (!order) {
+      this.logger.error('Order not found', null, context);
+      throw new OrderException(OrderValidation.ORDER_NOT_FOUND);
+    }
+
+    this.logger.log(
+      `Initiate payment for order: ${JSON.stringify(order)}`,
+      context,
+    );
+
+    if (order.payment) {
+      if (
+        order.payment.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        createPaymentDto.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        order.subtotal === order.payment.amount
+      ) {
+        this.logger.warn(
+          `Order ${order.slug} already has a payment`,
+          null,
+          context,
+        );
+        throw new PaymentException(PaymentValidation.ORDER_ALREADY_HAS_PAYMENT);
+      }
+    }
+
+    if (order.status !== OrderStatus.PENDING) {
+      this.logger.error('Order is not pending', null, context);
+      throw new OrderException(
+        OrderValidation.ORDER_STATUS_INVALID,
+        'Order is not pending',
+      );
+    }
+
+    if (order.voucher) {
+      const isVoucherTimeValid = await this.voucherUtils.isVoucherTimeValid(
+        order.voucher,
+      );
+      if (!isVoucherTimeValid) {
+        // remove voucher from order
+        const removedVoucher = order.voucher;
+        if (
+          removedVoucher?.applicabilityRule ===
+          VoucherApplicabilityRule.ALL_REQUIRED
+        ) {
+          if (removedVoucher?.type === VoucherType.SAME_PRICE_PRODUCT) {
+            const updatedOrderItems = order.orderItems.map((orderItem) => {
+              const updatedOrderItem = this.orderItemUtils.getUpdatedOrderItem(
+                null,
+                orderItem,
+                false, // is add voucher
+              );
+              return updatedOrderItem;
+            });
+            order.orderItems = updatedOrderItems;
+          }
+        }
+
+        if (
+          removedVoucher?.applicabilityRule ===
+          VoucherApplicabilityRule.AT_LEAST_ONE_REQUIRED
+        ) {
+          const updatedOrderItems = order.orderItems.map((orderItem) => {
+            const updatedOrderItem = this.orderItemUtils.getUpdatedOrderItem(
+              null,
+              orderItem,
+              false, // is add voucher
+            );
+            return updatedOrderItem;
+          });
+          order.orderItems = updatedOrderItems;
+        }
+
+        order.voucher = null;
+        const { subtotal, originalSubtotal } =
+          await this.orderUtils.getOrderSubtotal(order, null);
+
+        order.subtotal = subtotal;
+        order.originalSubtotal = originalSubtotal;
+
+        removedVoucher.remainingUsage += 1;
+        await this.voucherRepository.save(removedVoucher);
+        this.logger.log(
+          `Voucher ${removedVoucher.code} has been removed from order ${order.slug}`,
+          context,
+        );
+
+        await this.orderRepository.save(order);
+
+        throw new VoucherException(VoucherValidation.VOUCHER_IS_EXPIRED);
+      }
+    }
+
+    // validate voucher payment method
+    await this.voucherUtils.validateVoucherPaymentMethod(
+      order.voucher, // if voucher is null, return true
+      createPaymentDto.paymentMethod,
+    );
+
+    let payment: Payment;
+    // Customer resolved from QR token (only set when dto.qrToken is provided)
+    let qrCustomer: User | null = null;
+
+    if (user.role?.name === RoleEnum.Customer) {
+      switch (createPaymentDto.paymentMethod) {
+        case PaymentMethod.BANK_TRANSFER:
+          if (order.subtotal < 2000) {
+            order.loss = order.subtotal;
+            order.subtotal = 0;
+            createPaymentDto.paymentMethod = PaymentMethod.CASH;
+            payment = await this.cashStrategy.process(order);
+            break;
+          }
+          payment = await this.bankTransferStrategy.process(order);
+          break;
+        case PaymentMethod.POINT:
+          payment = await this.pointStategy.process(order);
+          break;
+        default:
+          this.logger.error('Customer only use bank transfer', null, context);
+          throw new PaymentException(
+            PaymentValidation.CUSTOMER_ONLY_USE_BANK_TRANSFER,
+          );
+      }
+    } else if (
+      user.role?.name === RoleEnum.Staff ||
+      user.role?.name === RoleEnum.Manager ||
+      user.role?.name === RoleEnum.Admin ||
+      user.role?.name === RoleEnum.SuperAdmin
+    ) {
+      switch (createPaymentDto.paymentMethod) {
+        case PaymentMethod.BANK_TRANSFER:
+          if (order.subtotal < 2000) {
+            order.loss = order.subtotal;
+            order.subtotal = 0;
+            createPaymentDto.paymentMethod = PaymentMethod.CASH;
+            payment = await this.cashStrategy.process(order);
+            break;
+          }
+          payment = await this.bankTransferStrategy.process(order);
+          break;
+        case PaymentMethod.CREDIT_CARD:
+          if (order.subtotal < 2000) {
+            order.loss = order.subtotal;
+            order.subtotal = 0;
+            createPaymentDto.paymentMethod = PaymentMethod.CASH;
+            payment = await this.cashStrategy.process(order);
+            break;
+          }
+          payment = await this.creditCardStrategy.process(
+            order,
+            createPaymentDto.transactionId,
+          );
+          break;
+        case PaymentMethod.CASH:
+          if (order.subtotal < 2000) {
+            order.loss = order.subtotal;
+            order.subtotal = 0;
+          }
+          payment = await this.cashStrategy.process(order);
+          break;
+        case PaymentMethod.POINT: {
+          if (createPaymentDto.qrToken) {
+            // QR scan flow: delegate QR authentication to QrPaymentService.
+            // QrPaymentService.verify only checks token / idempotency / owner /
+            // branch — it does NOT repeat order/balance/voucher checks already
+            // handled by initiate + pointStrategy.
+            qrCustomer = await this.qrPaymentService.verify(
+              createPaymentDto.qrToken,
+              order,
+              currentUser,
+            );
+          } else {
+            // Membership card flow (existing behavior, untouched)
+            if (!createPaymentDto.membershipCard) {
+              this.logger.error('Membership card is required', null, context);
+              throw new MembershipCardException(
+                MembershipCardValidation.MEMBERSHIP_CARD_CODE_REQUIRED,
+              );
+            }
+            const membershipCard = await this.membershipCardRepository.findOne({
+              where: { code: createPaymentDto.membershipCard },
+              relations: { user: true },
+            });
+            if (!membershipCard) {
+              this.logger.error('Membership card not found', null, context);
+              throw new MembershipCardException(
+                MembershipCardValidation.MEMBERSHIP_CARD_NOT_FOUND,
+              );
+            }
+            if (!membershipCard.user) {
+              this.logger.error(
+                'Membership card user not found',
+                null,
+                context,
+              );
+              throw new UserException(UserValidation.USER_NOT_FOUND);
+            }
+
+            if (order.owner?.role?.name !== RoleEnum.Customer) {
+              this.logger.error('User is not a customer', null, context);
+              throw new UserException(UserValidation.OWNER_NOT_A_CUSTOMER);
+            }
+
+            if (membershipCard.user.id !== order.owner.id) {
+              this.logger.error(
+                'Membership card user is not the order owner',
+                null,
+                context,
+              );
+              throw new MembershipCardException(
+                MembershipCardValidation.MEMBERSHIP_CARD_USER_IS_NOT_THE_ORDER_OWNER,
+              );
+            }
+          }
+
+          payment = await this.pointStategy.process(order);
+          break;
+        }
+        default:
+          this.logger.error('Invalid payment method', null, context);
+          throw new PaymentException(PaymentValidation.PAYMENT_METHOD_INVALID);
+      }
+    } else {
+      this.logger.error('Role not allowed to initiate payment', null, context);
+      throw new PaymentException(
+        PaymentValidation.ROLE_NOT_ALLOWED_TO_INITIATE_PAYMENT,
+      );
+    }
+
+    this.logger.log(`Created Payment: ${JSON.stringify(payment)}`, context);
+
+    // Delete previous payment
+    if (order.payment) {
+      // await this.paymentRepository.softRemove(order.payment);
+      await this.paymentUtils.cancelPayment(order.payment.slug);
+    }
+
+    // Update order
+    order.payment = payment;
+
+    await this.orderRepository.save(order);
+
+    if (
+      payment.paymentMethod === PaymentMethod.CASH ||
+      payment.paymentMethod === PaymentMethod.POINT ||
+      payment.paymentMethod === PaymentMethod.CREDIT_CARD
+    ) {
+      // Update order status
+      this.eventEmitter.emit(PaymentAction.PAYMENT_PAID, { orderId: order.id });
+    }
+
+    // QR scan flow finalization: set idempotency key + push notification.
+    // Only fires when initiate was called with dto.qrToken (resolved customer
+    // is captured into qrCustomer inside the POINT case above).
+    if (createPaymentDto.qrToken && qrCustomer) {
+      await this.qrPaymentService.finalize(
+        createPaymentDto.qrToken,
+        order,
+        qrCustomer,
+      );
+    }
+
+    return this.mapper.map(payment, Payment, PaymentResponseDto);
+  }
+
+  async initiatePublic(
+    createPaymentDto: CreatePaymentDto,
+  ): Promise<PaymentResponseDto> {
+    const context = `${PaymentService.name}.${this.initiatePublic.name}`;
+    // get order
+    const order = await this.orderUtils.getOrder({
+      where: { slug: createPaymentDto.orderSlug },
+    });
+    if (order.owner?.phonenumber !== 'default-customer') {
+      this.logger.error('Initiate public payment denied', null, context);
+      throw new PaymentException(
+        PaymentValidation.INITIATE_PUBLIC_PAYMENT_DENIED,
+      );
+    }
+
+    checkActiveUser(order.owner);
+    checkUserRequirement(order.owner);
+
+    if (order.status !== OrderStatus.PENDING) {
+      this.logger.error('Order is not pending', null, context);
+      throw new OrderException(
+        OrderValidation.ORDER_STATUS_INVALID,
+        'Order is not pending',
+      );
+    }
+
+    if (order.voucher) {
+      const isVoucherTimeValid = await this.voucherUtils.isVoucherTimeValid(
+        order.voucher,
+      );
+      if (!isVoucherTimeValid) {
+        // remove voucher from order
+        const removedVoucher = order.voucher;
+        if (
+          removedVoucher?.applicabilityRule ===
+          VoucherApplicabilityRule.ALL_REQUIRED
+        ) {
+          if (removedVoucher?.type === VoucherType.SAME_PRICE_PRODUCT) {
+            const updatedOrderItems = order.orderItems.map((orderItem) => {
+              const updatedOrderItem = this.orderItemUtils.getUpdatedOrderItem(
+                null,
+                orderItem,
+                false, // is add voucher
+              );
+              return updatedOrderItem;
+            });
+            order.orderItems = updatedOrderItems;
+          }
+        }
+
+        if (
+          removedVoucher?.applicabilityRule ===
+          VoucherApplicabilityRule.AT_LEAST_ONE_REQUIRED
+        ) {
+          const updatedOrderItems = order.orderItems.map((orderItem) => {
+            const updatedOrderItem = this.orderItemUtils.getUpdatedOrderItem(
+              null,
+              orderItem,
+              false, // is add voucher
+            );
+            return updatedOrderItem;
+          });
+          order.orderItems = updatedOrderItems;
+        }
+
+        order.voucher = null;
+        const { subtotal, originalSubtotal } =
+          await this.orderUtils.getOrderSubtotal(order, null);
+
+        order.subtotal = subtotal;
+        order.originalSubtotal = originalSubtotal;
+
+        removedVoucher.remainingUsage += 1;
+        await this.voucherRepository.save(removedVoucher);
+        this.logger.log(
+          `Voucher ${removedVoucher.code} has been removed from order ${order.slug}`,
+          context,
+        );
+
+        await this.orderRepository.save(order);
+
+        throw new VoucherException(VoucherValidation.VOUCHER_IS_EXPIRED);
+      }
+    }
+
+    // validate voucher payment method
+    await this.voucherUtils.validateVoucherPaymentMethod(
+      order.voucher, // if voucher is null, return true
+      createPaymentDto.paymentMethod,
+    );
+
+    // if (order.payment) {
+    //   this.logger.warn(
+    //     `Order ${order.slug} already has a payment`,
+    //     null,
+    //     context,
+    //   );
+    //   throw new PaymentException(PaymentValidation.ORDER_ALREADY_HAS_PAYMENT);
+    // }
+
+    if (order.payment) {
+      if (
+        order.payment.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        createPaymentDto.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        order.subtotal === order.payment.amount
+      ) {
+        this.logger.warn(
+          `Order ${order.slug} already has a payment`,
+          null,
+          context,
+        );
+        throw new PaymentException(PaymentValidation.ORDER_ALREADY_HAS_PAYMENT);
+      }
+    }
+
+    let payment: Payment;
+
+    switch (createPaymentDto.paymentMethod) {
+      case PaymentMethod.BANK_TRANSFER:
+        if (order.subtotal < 2000) {
+          order.loss = order.subtotal;
+          order.subtotal = 0;
+          createPaymentDto.paymentMethod = PaymentMethod.CASH;
+          payment = await this.cashStrategy.process(order);
+          break;
+        }
+        payment = await this.bankTransferStrategy.process(order);
+        break;
+      default:
+        this.logger.error('Invalid payment method', null, context);
+        throw new PaymentException(PaymentValidation.PAYMENT_METHOD_INVALID);
+    }
+    this.logger.log(`Created Payment: ${JSON.stringify(payment)}`, context);
+
+    // Delete previous payment
+    if (order.payment) {
+      await this.paymentUtils.cancelPayment(order.payment.slug);
+    }
+
+    // Update order
+    order.payment = payment;
+
+    await this.orderRepository.save(order);
+
+    if (payment.paymentMethod === PaymentMethod.CASH) {
+      // Update order status
+      this.eventEmitter.emit(PaymentAction.PAYMENT_PAID, { orderId: order.id });
+    }
+    return this.mapper.map(payment, Payment, PaymentResponseDto);
+  }
+
+  /**
+   * Callback update payment status
+   * @param {CallbackUpdatePaymentStatusRequestDto} requestData
+   * @returns {Promise<PaymentResponseDto>} payment
+   * @throws {PaymentException}
+   */
+  async callback(requestData: ACBStatusRequestDto): Promise<ACBResponseDto> {
+    const context = `${PaymentService.name}.${this.callback.name}`;
+    // Get transaction from request data
+    const transaction =
+      requestData.requestParameters?.request?.requestParams?.transactions?.[0];
+    if (!transaction) {
+      this.logger.error('Transaction not found', null, context);
+      throw new PaymentException(PaymentValidation.TRANSACTION_NOT_FOUND);
+    }
+
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        transactionId: transaction.transactionEntityAttribute.traceNumber,
+      },
+      relations: ['order', 'cardOrder'],
+    });
+
+    this.logger.log(`Payment: ${JSON.stringify(payment)}`, context);
+
+    if (!payment) {
+      this.logger.error('Payment not found', null, context);
+      throw new PaymentException(PaymentValidation.PAYMENT_NOT_FOUND);
+    }
+
+    const statusCode =
+      transaction.transactionStatus === ACBConnectorTransactionStatus.COMPLETED
+        ? PaymentStatus.COMPLETED
+        : PaymentStatus.FAILED;
+
+    Object.assign(payment, {
+      statusCode: statusCode,
+      statusMessage: statusCode,
+    });
+
+    const updatedPayment = await this.paymentRepository.save(payment);
+    this.logger.log(`Payment ${updatedPayment.id}`, context);
+
+    // Update order status
+    if (payment.order)
+      this.eventEmitter.emit(PaymentAction.PAYMENT_PAID, {
+        orderId: payment.order?.id,
+      });
+
+    if (payment.cardOrder) {
+      this.eventEmitter.emit(PaymentAction.CARD_ORDER_PAYMENT_PAID, {
+        orderSlug: payment.cardOrder?.slug,
+      });
+    }
+
+    // return data for acb
+    const response = {
+      requestTrace: uuidv4(),
+      responseDateTime: formatMoment(),
+      responseStatus: {
+        responseCode:
+          transaction?.transactionStatus ===
+          ACBConnectorTransactionStatus.COMPLETED
+            ? ACBConnectorStatus.SUCCESS
+            : ACBConnectorStatus.BAD_REQUEST,
+        responseMessage: transaction?.transactionStatus,
+      },
+      responseBody: {
+        index: 1,
+        referenceCode: payment.slug,
+      },
+    } as ACBResponseDto;
+    this.logger.warn(`Callback response: ${JSON.stringify(response)}`, context);
+    return response;
+  }
+
+  async autoPrintPayment(slug: string): Promise<void> {
+    const context = `${PaymentService.name}.${this.autoPrintPayment.name}`;
+
+    const payment = await this.paymentRepository.findOne({
+      where: { slug },
+      relations: ['order', 'order.branch'],
+    });
+
+    if (!payment) {
+      this.logger.warn(`Payment ${slug} not found`, context);
+      throw new PaymentException(PaymentValidation.PAYMENT_NOT_FOUND);
+    }
+
+    if (payment.paymentMethod !== PaymentMethod.BANK_TRANSFER) {
+      this.logger.warn(`Payment ${slug} is not a bank transfer`, context);
+      throw new PaymentException(
+        PaymentValidation.ONLY_BANK_TRANSFER_CAN_EXPORT,
+      );
+    }
+
+    const rawBase64 = await this.printerUtils.createPaymentEscPosBase64(slug);
+
+    const branch = payment.order?.branch;
+    if (!branch) {
+      this.logger.warn(`Branch not found for payment ${slug}`, context);
+      return;
+    }
+
+    const printers = await this.printerRepository.find({
+      where: { invoiceArea: { branch: { id: branch.id } }, isActive: true },
+      relations: { invoiceArea: { branch: true } },
+    });
+    const activePrinters = printers.filter(
+      (p) => p.printerId && p.dataType === PrinterDataType.ESC_POS,
+    );
+
+    if (activePrinters.length === 0) {
+      this.logger.warn(
+        `No active ESC/POS invoice printers for branch ${branch.slug}`,
+        context,
+      );
+      return;
+    }
+
+    for (const printer of activePrinters) {
+      await this.printerConnectorUtils.printInvoicePassthrough(
+        branch.slug,
+        printer.printerId,
+        `payment-${slug}`,
+        rawBase64,
+        0,
+        printer.numberPrinting ?? 1,
+      );
+    }
+
+    this.logger.log(
+      `Auto printed payment ${slug} on ${activePrinters.length} printer(s)`,
+      context,
+    );
+  }
+}
