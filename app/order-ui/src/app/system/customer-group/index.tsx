@@ -1,1 +1,0 @@
-export { default as UserGroupPage } from './page'

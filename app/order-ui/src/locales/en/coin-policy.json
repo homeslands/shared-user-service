@@ -1,9 +1,0 @@
-{
-  "coinPolicy": {
-    "title": "Coin policy",
-    "noData": "No data",
-    "active": "Active",
-    "inactive": "Inactive",
-    "maxBalance": "Max balance"
-  }
-}

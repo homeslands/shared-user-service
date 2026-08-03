@@ -1,1 +1,0 @@
-export { default as ClientOrderSuccessPage } from './success-page'

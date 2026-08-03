@@ -1,1 +1,0 @@
-export { default as UpdateOrderPage } from './page'
