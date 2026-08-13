@@ -19,7 +19,7 @@ async function bootstrap() {
   });
 
   const configService = app.get(ConfigService);
-  const port = configService.get('PORT') || 8080;
+  const port = configService.get('PORT') || 8086;
   const version = configService.get('VERSION');
   const allowedOrigins = configService.get('ALLOWED_ORIGINS');
 
