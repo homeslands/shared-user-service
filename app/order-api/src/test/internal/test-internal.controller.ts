@@ -1,4 +1,5 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Public } from 'src/auth/decorator/public.decorator';
 import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 
 interface PingRequest {
@@ -10,6 +11,7 @@ interface PingRequest {
 @UseGuards(InternalApiGuard)
 @Controller('internal/test')
 export class TestInternalController {
+  @Public()
   @Post('ping')
   ping(@Body() body: PingRequest) {
     return {
