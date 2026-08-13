@@ -23,7 +23,7 @@ services:
   order-api:
     image: ghcr.io/homeslands/order-api:prod-for-staff
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/api/${VERSION}/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:8086/api/${VERSION}/health" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -109,7 +109,7 @@ services:
     depends_on:
       - mysql_db
     ports:
-      - 8080:8080
+      - 8086:8086
 
   mysql_db:
     image: mysql:8.2.0
