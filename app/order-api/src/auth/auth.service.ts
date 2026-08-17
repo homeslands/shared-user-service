@@ -1633,7 +1633,6 @@ export class AuthService {
     const payload: AuthJwtPayload = {
       sub: user.id,
       jti: uuidv4(),
-      scope: this.authUtils.buildScope(user),
     };
     this.logger.log(
       `User ${user.phonenumber} logged in`,
@@ -2013,13 +2012,6 @@ export class AuthService {
     const userWithRelations = await this.userRepository.findOne({
       where: { id: createdUser.id },
       relations: {
-        role: {
-          permissions: {
-            authority: {
-              authorityGroup: true,
-            },
-          },
-        },
         userRequirements: true,
       },
     });
@@ -2029,7 +2021,6 @@ export class AuthService {
     const payload: AuthJwtPayload = {
       sub: userWithRelations.id,
       jti: uuidv4(),
-      scope: this.authUtils.buildScope(userWithRelations),
     };
 
     return this.generateToken(payload);
@@ -2215,23 +2206,12 @@ export class AuthService {
       where: {
         id: payload.sub,
       },
-      // relations: ['branch', 'role.permissions.authority.authorityGroup'],
       relations: {
-        branch: true,
-        role: {
-          permissions: {
-            authority: {
-              authorityGroup: true,
-            },
-          },
-        },
         userRequirements: true,
       },
     });
     checkActiveUser(user);
     checkUserRequirement(user);
-
-    payload.scope = this.authUtils.buildScope(user);
 
     return this.generateToken(payload);
   }
