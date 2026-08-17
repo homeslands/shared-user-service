@@ -4,13 +4,13 @@ import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { BaseResponseDto } from 'src/app/base.dto';
 import { ZaloOaStrategy } from './zalo-oa-connector.constants';
 
-// Use: ZNS
+// Use: ZNS (SendZaloMessage_V6)
 export class ZaloOaInitiateSmsRequestDto {
   ApiKey: string;
   SecretKey: string;
   OAID: string;
   Phone: string;
-  TempData: ZaloOaInitiateSmsTemplateDataDto;
+  TempData: Record<string, string>;
   TempID: string;
   campaignid: string;
   RequestId?: string;

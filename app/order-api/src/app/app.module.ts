@@ -87,7 +87,6 @@ import { PrinterLegacyModule } from 'src/printer-legacy/printer-legacy.module';
 import { QrPaymentModule } from 'src/qr-payment/qr-payment.module';
 
 import { CampaignModule } from 'src/campaign/campaign.module';
-import { TestModule } from 'src/test/test.module';
 @Module({
   imports: [
     BullModule.forRootAsync({
@@ -103,7 +102,6 @@ import { TestModule } from 'src/test/test.module';
         };
         return {
           connection: connectionOptions,
-          prefix: 'shared_user',
         };
       },
       inject: [ConfigService],
@@ -192,7 +190,6 @@ import { TestModule } from 'src/test/test.module';
     PrinterLegacyModule,
     QrPaymentModule,
     CampaignModule,
-    TestModule,
   ],
   controllers: [AppController],
   providers: [

@@ -12,6 +12,7 @@ import {
 import { CampaignRecipient } from './campaign-recipient.entity';
 import { VoucherCampaignTemplate } from './voucher-campaign-template.entity';
 import { CampaignStatus } from '../campaign.constants';
+import { GiftCampaignTemplate } from './gift-campaign-template.entity';
 
 @Entity({ name: 'campaign_tbl' })
 export class Campaign extends Base {
@@ -39,9 +40,11 @@ export class Campaign extends Base {
   @Column({ name: 'end_date_column', nullable: true })
   endDate?: Date;
 
-  @ManyToOne(() => VoucherGroup, { nullable: false })
+  // Nullable: only voucher campaigns issue vouchers into a group. Gift campaigns
+  // don't use a voucher group, so the FK is left null for them.
+  @ManyToOne(() => VoucherGroup, { nullable: true })
   @JoinColumn({ name: 'voucher_group_column' })
-  voucherGroup: VoucherGroup;
+  voucherGroup?: VoucherGroup;
 
   @OneToOne(() => VoucherCampaignTemplate, (template) => template.campaign, {
     nullable: true,
@@ -49,6 +52,13 @@ export class Campaign extends Base {
   })
   @JoinColumn({ name: 'voucher_campaign_template_column' })
   voucherCampaignTemplate?: VoucherCampaignTemplate;
+
+  @OneToOne(() => GiftCampaignTemplate, (template) => template.campaign, {
+    nullable: true,
+    cascade: ['insert', 'update'],
+  })
+  @JoinColumn({ name: 'gift_campaign_template_column' })
+  giftCampaignTemplate?: GiftCampaignTemplate;
 
   @OneToMany(() => CampaignRecipient, (recipient) => recipient.campaign)
   recipients: CampaignRecipient[];

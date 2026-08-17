@@ -7,11 +7,15 @@ export class NotificationLanguageService {
     vi: {
       [NotificationMessageCode.VOUCHER_BIRTHDAY_RECEIVED]: {
         title: 'Chúc mừng sinh nhật!',
-        body: 'Bạn vừa nhận được voucher {{voucherTitle}} (mã: {{voucherCode}}). Chúc bạn có một ngày sinh nhật vui vẻ!',
+        body: 'Bạn vừa nhận được voucher sinh nhật. Chúc bạn có một ngày sinh nhật vui vẻ!',
       },
       [NotificationMessageCode.VOUCHER_NEW_USER_RECEIVED]: {
         title: 'Chào mừng bạn!',
         body: 'Bạn vừa nhận được voucher {{voucherTitle}} (mã: {{voucherCode}}) dành cho thành viên mới. Chúc bạn mua sắm vui vẻ!',
+      },
+      [NotificationMessageCode.GIFT_BIRTHDAY_RECEIVED]: {
+        title: 'Chúc mừng sinh nhật!',
+        body: 'Bạn vừa nhận được quà sinh nhật {{giftTitle}}. Chúc bạn có một ngày sinh nhật vui vẻ!',
       },
       [NotificationMessageCode.ORDER_NEEDS_PROCESSED]: {
         title: 'Đơn hàng cần xử lý',
@@ -49,11 +53,15 @@ export class NotificationLanguageService {
     en: {
       [NotificationMessageCode.VOUCHER_BIRTHDAY_RECEIVED]: {
         title: 'Happy Birthday!',
-        body: 'You have received a voucher {{voucherTitle}} (code: {{voucherCode}}). Wishing you a wonderful birthday!',
+        body: 'You have received a birthday voucher. Wishing you a wonderful birthday!',
       },
       [NotificationMessageCode.VOUCHER_NEW_USER_RECEIVED]: {
         title: 'Welcome!',
         body: 'You have received a new member voucher {{voucherTitle}} (code: {{voucherCode}}). Happy shopping!',
+      },
+      [NotificationMessageCode.GIFT_BIRTHDAY_RECEIVED]: {
+        title: 'Happy Birthday!',
+        body: 'You have received a birthday gift {{giftTitle}}. Wishing you a wonderful birthday!',
       },
       [NotificationMessageCode.ORDER_NEEDS_PROCESSED]: {
         title: 'Order needs processed',

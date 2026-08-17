@@ -14,6 +14,7 @@ import {
   LessThanOrEqual,
   Like,
   MoreThanOrEqual,
+  Raw,
   Repository,
 } from 'typeorm';
 import { User } from './user.entity';
@@ -29,6 +30,7 @@ import {
   AggregateAccountRevenueResponseDto,
   CompleteUserRegistrationRequestDto,
   CreateUserRequestDto,
+  ExportUserQueryRequestDto,
   GetAccountRevenueQueryDto,
   GetAllUserQueryRequestDto,
   GetUserStatisticsQueryRequestDto,
@@ -55,9 +57,11 @@ import { Branch } from 'src/branch/branch.entity';
 import { AuthException } from 'src/auth/auth.exception';
 import { AuthValidation } from 'src/auth/auth.validation';
 import { RoleEnum } from 'src/role/role.enum';
+import { SharedBalanceService } from 'src/shared/services/shared-balance.service';
 import { AuthProfileResponseDto } from 'src/auth/auth.dto';
 import {
   AccountRevenueCustomerType,
+  DobFilterType,
   UserRequirementKey,
   UserRequirementLevel,
   UserRequirementScope,
@@ -72,6 +76,7 @@ import { RevenueValidation } from 'src/revenue/revenue.validation';
 import { RevenueException } from 'src/revenue/revenue.exception';
 import { BranchUtils } from 'src/branch/branch.utils';
 import moment from 'moment';
+import ExcelJS from 'exceljs';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
 import { CampaignAction } from 'src/campaign/campaign.constants';
@@ -93,6 +98,7 @@ export class UserService {
     private readonly mapper: Mapper,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
+    private readonly sharedBalanceService: SharedBalanceService,
     private readonly transactionManagerService: TransactionManagerService,
     private readonly eventEmitter: EventEmitter2,
     private readonly branchUtils: BranchUtils,
@@ -146,9 +152,9 @@ export class UserService {
       user.branch = branch;
     }
 
-    if (requestData.dob) {
-      const [day, month] = requestData.dob.split('/');
-      user.dobDM = `${day}${month}`;
+    if ('dob' in requestData) {
+      const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
+      user.dobDM = day && month ? `${day}${month}` : null;
     }
     try {
       const updatedUser = await this.userRepository.save(user);
@@ -340,6 +346,7 @@ export class UserService {
       user.branch = branch;
     }
 
+    let createdUser = null;
     if (createdRole == RoleEnum.Admin || createdRole == RoleEnum.SuperAdmin) {
       user.isVerifiedPhonenumber = requestData.isVerifiedPhonenumber ?? false;
     } else {
@@ -388,6 +395,9 @@ export class UserService {
       );
       throw new UserException(UserValidation.ERROR_CREATE_USER);
     }
+
+    if (createdUser)
+      await this.sharedBalanceService.create({ userSlug: createdUser.slug });
 
     return this.mapper.map(user, User, UserResponseDto);
   }
@@ -478,6 +488,35 @@ export class UserService {
       whereOptions.createdAt = LessThanOrEqual(new Date(query.endDate));
     }
 
+    if (query.birthdayFromDate || query.birthdayToDate) {
+      // dobDM is stored as ddmm; reorder to mmdd for correct chronological comparison
+      const toMMDD = (ddmm: string) => {
+        const [day, month] = ddmm.split('/');
+        return `${month}${day}`;
+      };
+      const fromMMDD = query.birthdayFromDate
+        ? toMMDD(query.birthdayFromDate)
+        : '0101';
+      const toMMDDValue = query.birthdayToDate
+        ? toMMDD(query.birthdayToDate)
+        : '1231';
+      const reorderedExpr = (alias: string) =>
+        `CONCAT(SUBSTRING(${alias}, 3, 2), SUBSTRING(${alias}, 1, 2))`;
+
+      whereOptions.dobDM =
+        fromMMDD <= toMMDDValue
+          ? Raw(
+              (alias) =>
+                `${alias} IS NOT NULL AND ${reorderedExpr(alias)} BETWEEN :fromMMDD AND :toMMDD`,
+              { fromMMDD, toMMDD: toMMDDValue },
+            )
+          : Raw(
+              (alias) =>
+                `${alias} IS NOT NULL AND (${reorderedExpr(alias)} >= :fromMMDD OR ${reorderedExpr(alias)} <= :toMMDD)`,
+              { fromMMDD, toMMDD: toMMDDValue },
+            );
+    }
+
     // Construct find many options
     const findManyOptions: FindManyOptions<User> = {
       relations: {
@@ -485,6 +524,7 @@ export class UserService {
         role: true,
         accumulatedPoint: true,
         membershipCard: true,
+        balance: true,
         userRequirements: true,
       },
       where: whereOptions,
@@ -519,6 +559,139 @@ export class UserService {
       pageSize,
       totalPages,
     } as AppPaginatedResponseDto<UserResponseDto>;
+  }
+
+  /**
+   * Parse a date-of-birth range bound into a comparable numeric key according to
+   * the granularity (`day` | `month` | `day_month`). The year is always ignored.
+   * - day: `5` / `05` -> 5
+   * - month: `6` / `06` -> 6
+   * - day_month: `01/06` (DD/MM) -> 601 (month * 100 + day)
+   */
+  private parseDobBound(value: string, type: DobFilterType): number {
+    if (type === DobFilterType.DAY_MONTH) {
+      const match = value.match(/^(\d{1,2})\/(\d{1,2})$/);
+      if (!match)
+        throw new BadRequestException(
+          `Invalid date of birth bound "${value}". Expected DD/MM`,
+        );
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10);
+      if (day < 1 || day > 31 || month < 1 || month > 12)
+        throw new BadRequestException(
+          `Invalid date of birth bound "${value}". Day must be 1-31, month 1-12`,
+        );
+      return month * 100 + day;
+    }
+
+    if (!/^\d{1,2}$/.test(value))
+      throw new BadRequestException(
+        `Invalid date of birth bound "${value}". Expected a number`,
+      );
+    const num = parseInt(value, 10);
+    const max = type === DobFilterType.MONTH ? 12 : 31;
+    if (num < 1 || num > max)
+      throw new BadRequestException(
+        `Invalid date of birth bound "${value}". Must be 1-${max}`,
+      );
+    return num;
+  }
+
+  /**
+   * Build a comparable numeric key from a user's `dob` (DD/MM/YYYY string),
+   * matching the granularity used by {@link parseDobBound}. Returns null when
+   * the dob is missing or invalid.
+   */
+  private dobToKey(dob: string, type: DobFilterType): number | null {
+    const parsed = moment(dob, 'DD/MM/YYYY', true);
+    if (!parsed.isValid()) return null;
+    const day = parsed.date();
+    const month = parsed.month() + 1;
+    if (type === DobFilterType.DAY) return day;
+    if (type === DobFilterType.MONTH) return month;
+    return month * 100 + day;
+  }
+
+  /**
+   * Export users to an Excel file containing name, phone number and date of birth.
+   * Supports filtering by branch, phone number and a date of birth range that
+   * matches by day, month or day+month (the year is ignored).
+   * Note: `dob` is stored as a `DD/MM/YYYY` string, so the range is filtered in
+   * memory after fetching.
+   */
+  async exportUsersToExcel(query: ExportUserQueryRequestDto): Promise<Buffer> {
+    const context = `${UserService.name}.${this.exportUsersToExcel.name}`;
+
+    const whereOptions: FindOptionsWhere<User> = {};
+    if (query.phonenumber)
+      whereOptions.phonenumber = Like(`%${query.phonenumber}%`);
+
+    if (!_.isEmpty(query.role))
+      whereOptions.role = {
+        name: In(query.role),
+      };
+
+    let users = await this.userRepository.find({
+      relations: { branch: true, role: true },
+      where: whereOptions,
+      order: { createdAt: 'DESC' },
+    });
+
+    // Filter by date of birth range (dob stored as DD/MM/YYYY; year ignored)
+    if (query.dobStartDate || query.dobEndDate) {
+      const type = query.dobFilterType ?? DobFilterType.DAY_MONTH;
+      const start = query.dobStartDate
+        ? this.parseDobBound(query.dobStartDate, type)
+        : null;
+      const end = query.dobEndDate
+        ? this.parseDobBound(query.dobEndDate, type)
+        : null;
+
+      users = users.filter((user) => {
+        if (!user.dob) return false;
+        const key = this.dobToKey(user.dob, type);
+        if (key === null) return false;
+        if (start !== null && end !== null) {
+          // Support wrap-around ranges (e.g. 25/12 -> 05/01)
+          return start <= end
+            ? key >= start && key <= end
+            : key >= start || key <= end;
+        }
+        if (start !== null) return key >= start;
+        if (end !== null) return key <= end;
+        return true;
+      });
+    }
+
+    // Build workbook
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Users');
+    worksheet.columns = [
+      { header: 'No.', key: 'index', width: 6 },
+      { header: 'Name', key: 'name', width: 30 },
+      { header: 'Phone number', key: 'phonenumber', width: 18 },
+      { header: 'Date of birth', key: 'dob', width: 16 },
+      { header: 'Role', key: 'role', width: 16 },
+    ];
+    worksheet.getRow(1).font = { bold: true };
+
+    users.forEach((user, index) => {
+      const name = [user.firstName, user.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      worksheet.addRow({
+        index: index + 1,
+        name: name || 'N/A',
+        phonenumber: user.phonenumber || 'N/A',
+        dob: user.dob || 'N/A',
+        role: user.role.name || 'N/A',
+      });
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    this.logger.log(`Exported ${users.length} users to Excel`, context);
+    return Buffer.from(arrayBuffer);
   }
 
   private buildGroupByExpr(groupBy: string): string {

@@ -9,9 +9,11 @@ import {
 import { Injectable } from '@nestjs/common';
 import { Campaign } from './entity/campaign.entity';
 import { VoucherCampaignTemplate } from './entity/voucher-campaign-template.entity';
+import { GiftCampaignTemplate } from './entity/gift-campaign-template.entity';
 import {
   CampaignResponseDto,
   CreateCampaignRequestDto,
+  GiftCampaignTemplateResponseDto,
   VoucherCampaignTemplateResponseDto,
 } from './campaign.dto';
 import { baseMapper } from 'src/app/base.mapper';
@@ -41,6 +43,12 @@ export class CampaignProfile extends AutomapperProfile {
       );
       createMap(
         mapper,
+        GiftCampaignTemplate,
+        GiftCampaignTemplateResponseDto,
+        extend(baseMapper(mapper)),
+      );
+      createMap(
+        mapper,
         Campaign,
         CampaignResponseDto,
         forMember(
@@ -59,6 +67,18 @@ export class CampaignProfile extends AutomapperProfile {
                   src.voucherCampaignTemplate,
                   VoucherCampaignTemplate,
                   VoucherCampaignTemplateResponseDto,
+                )
+              : undefined,
+          ),
+        ),
+        forMember(
+          (dest) => dest.giftCampaignTemplate,
+          mapFrom((src) =>
+            src.giftCampaignTemplate
+              ? mapper.map(
+                  src.giftCampaignTemplate,
+                  GiftCampaignTemplate,
+                  GiftCampaignTemplateResponseDto,
                 )
               : undefined,
           ),

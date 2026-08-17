@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chúc mừng sinh nhật</title>
+    <% var dir=process.cwd() %>
+    <style>
+      <%- include(dir + '/public/css/tailwind.min.css') %>
+    </style>
+  </head>
+  <body class="bg-gray-100">
+    <div class="max-w-md mx-auto bg-white shadow-lg rounded-lg overflow-hidden">
+      <% var rewardType = locals.rewardType || 'voucher'; %>
+      <% if (rewardType === 'gift') { %>
+      <img
+        src="cid:birthday-gift"
+        alt="Chúc mừng sinh nhật"
+        class="w-full h-auto"
+        style="display: block; width: 100%; height: auto;"
+      />
+      <% } %>
+      <div class="px-6 py-4">
+        <h1 class="text-xl font-semibold text-gray-800">
+          Chúc mừng sinh nhật 🎉
+        </h1>
+        <p class="text-gray-700 mt-4">
+          Chúc mừng sinh nhật bạn <strong><%= locals.name %></strong> với mã
+          khách hàng <strong><%= locals.id %></strong>! TrendCoffee chúc bạn có
+          một tuổi mới thật nhiều sức khỏe, niềm vui và thật nhiều điều may mắn.
+        </p>
+        <% if (rewardType === 'gift') { %>
+        <p class="text-gray-700 mt-4">
+          Để cảm ơn bạn đã đồng hành cùng TrendCoffee, chúng mình gửi tặng một
+          phần bánh kem dành riêng cho lần ghé quán trong tháng sinh nhật.
+        </p>
+        <% } else { %>
+        <p class="text-gray-700 mt-4">
+          Để cảm ơn bạn đã đồng hành cùng TrendCoffee, chúng mình gửi tặng một
+          trong các phần quà dưới đây dành riêng cho lần ghé quán trong tháng
+          sinh nhật:
+        </p>
+
+        <% var vouchers = locals.vouchers || []; %>
+        <% if (vouchers.length) { %>
+        <ul class="mt-3 space-y-3">
+          <% vouchers.forEach(function (voucher) { %>
+          <li class="border border-dashed border-gray-300 rounded-md px-3 py-2">
+            <p class="font-semibold text-gray-900"><%= voucher.title %></p>
+            <p class="text-gray-700">
+              Giá trị:
+              <%= voucher.valueType === 'percentage'
+                ? 'Giảm ' + voucher.value + '%'
+                : 'Giảm ' + voucher.value + 'đ' %>
+            </p>
+            <p class="text-gray-700">
+              Sản phẩm áp dụng:
+              <%= (voucher.products && voucher.products.length)
+                ? voucher.products.join(', ')
+                : 'Tất cả sản phẩm' %>
+            </p>
+          </li>
+          <% }); %>
+        </ul>
+        <% } %>
+        <% } %>
+
+        <p class="text-gray-700 mt-4">
+          Chỉ cần cung cấp thông tin tài khoản khi đến quán, nhân viên sẽ hỗ trợ
+          bạn nhận ưu đãi nhé!
+        </p>
+        <p class="text-gray-700 mt-4">Hẹn gặp bạn tại TrendCoffee!</p>
+      </div>
+    </div>
+  </body>
+</html>

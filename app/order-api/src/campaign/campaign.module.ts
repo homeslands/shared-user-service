@@ -14,6 +14,8 @@ import { CampaignScheduler } from './campaign.scheduler';
 import { CampaignService } from './campaign.service';
 import { NewUserCampaignStrategy } from './strategy/new-user-campaign/new-user-campaign.strategy';
 import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/user-birthday-campaign.strategy';
+import { GiftBirthdayCampaignStrategy } from './strategy/gift-birthday-campaign/gift-birthday-campaign.strategy';
+import { GiftCampaignTemplate } from './entity/gift-campaign-template.entity';
 
 @Module({
   imports: [
@@ -21,6 +23,7 @@ import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/
       Campaign,
       CampaignRecipient,
       VoucherCampaignTemplate,
+      GiftCampaignTemplate,
       VoucherGroup,
       Voucher,
       User,
@@ -33,6 +36,7 @@ import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/
     CampaignProfile,
     NewUserCampaignStrategy,
     UserBirthdayCampaignStrategy,
+    GiftBirthdayCampaignStrategy,
     CampaignListener,
     CampaignScheduler,
   ],

@@ -8,16 +8,24 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   ValidationPipe,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { UserService } from './user.service';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AppPaginatedResponseDto, AppResponseDto } from 'src/app/app.dto';
 import {
   AggregateAccountRevenueResponseDto,
   CompleteUserRegistrationRequestDto,
   CreateUserRequestDto,
   CurrentUserDto,
+  ExportUserQueryRequestDto,
   GetAccountRevenueQueryDto,
   GetAllUserQueryRequestDto,
   GetUserStatisticsQueryRequestDto,
@@ -32,12 +40,35 @@ import { HasRoles } from 'src/role/roles.decorator';
 import { RoleEnum } from 'src/role/role.enum';
 import { CurrentUser } from './user.decorator';
 import { AuthProfileResponseDto } from 'src/auth/auth.dto';
+import { UserScheduler } from './user.scheduler';
 
 @Controller('user')
 @ApiTags('User')
 @ApiBearerAuth()
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly userScheduler: UserScheduler,
+  ) {}
+
+  @Post('birthday/trigger')
+  @HasRoles(RoleEnum.Admin, RoleEnum.SuperAdmin)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Manually run the birthday greeting scheduler (for testing)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Birthday greeting scheduler has been triggered successfully',
+  })
+  async triggerBirthdayScheduler(): Promise<AppResponseDto<void>> {
+    await this.userScheduler.BirthdayStrategyScheduler();
+    return {
+      message: 'Birthday greeting scheduler has been triggered successfully',
+      statusCode: HttpStatus.OK,
+      timestamp: new Date().toISOString(),
+    } as AppResponseDto<void>;
+  }
 
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -233,6 +264,43 @@ export class UserController {
       timestamp: new Date().toISOString(),
       result,
     } as AppResponseDto<AggregateAccountRevenueResponseDto>;
+  }
+
+  @Get('export')
+  @HasRoles(RoleEnum.Manager, RoleEnum.Admin, RoleEnum.SuperAdmin)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Export user information (name, phone number, date of birth) to Excel',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Users have been exported to Excel successfully',
+    content: {
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  async exportUsersToExcel(
+    @Query(new ValidationPipe({ transform: true }))
+    query: ExportUserQueryRequestDto,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.userService.exportUsersToExcel(query);
+    const filename = `users-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+
+    res.send(buffer);
   }
 
   @Get(':slug')

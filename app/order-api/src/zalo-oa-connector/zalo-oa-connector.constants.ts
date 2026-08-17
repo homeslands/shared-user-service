@@ -1,6 +1,7 @@
 export enum ZaloOaStrategy {
   VERIFY_ACCOUNT = 'verify-account',
   RESET_PASSWORD = 'reset-password',
+  BIRTHDAY = 'birthday',
 }
 
 export enum SMSChannel {
@@ -88,4 +89,17 @@ export const fillResetPasswordContent = (
     '{expireTime}',
     expireTime,
   );
+};
+
+export const BirthdayContent = `Kinh gui ban {P}, Nhan dip sinh nhat cua ban, TrendCoffee xin gui nhung loi chuc tot dep nhat. Chuc ban mot tuoi moi binh an, hanh phuc va gat hai nhieu thanh cong! Cam on ban da dong hanh cung TrendCoffee trong thoi gian qua, rat mong duoc don tiep va phuc vu ban. Tran trong, Doi ngu TrendCoffee.`;
+export const removeVietnameseTones = (str: string): string => {
+  return str
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D');
+};
+
+export const fillBirthdayContent = (name: string): string => {
+  return BirthdayContent.replace('{P}', removeVietnameseTones(name));
 };

@@ -4,8 +4,6 @@ import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { QueueRegisterKey } from 'src/app/app.constants';
 
-const KEY_PREFIX = 'shared_user';
-
 @Injectable()
 export class SharedRedisService implements OnModuleInit {
   private client: Redis;
@@ -19,22 +17,18 @@ export class SharedRedisService implements OnModuleInit {
     this.client = (await this.jobQueue.client) as Redis;
   }
 
-  private withPrefix(key: string): string {
-    return `${KEY_PREFIX}:${key}`;
-  }
-
   /** SET key value EX seconds */
   async set(key: string, value: string, ttlSeconds: number): Promise<void> {
-    await this.client.set(this.withPrefix(key), value, 'EX', ttlSeconds);
+    await this.client.set(key, value, 'EX', ttlSeconds);
   }
 
   /** GET key — returns value or null if key doesn't exist/expired */
   async get(key: string): Promise<string | null> {
-    return this.client.get(this.withPrefix(key));
+    return this.client.get(key);
   }
 
   /** DEL key — returns number of keys deleted (1 = existed and deleted, 0 = didn't exist) */
   async del(key: string): Promise<number> {
-    return this.client.del(this.withPrefix(key));
+    return this.client.del(key);
   }
 }

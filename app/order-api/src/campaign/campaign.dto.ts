@@ -12,7 +12,12 @@ import {
   IsArray,
   ValidateNested,
 } from 'class-validator';
-import { CampaignStatus, CampaignType } from './campaign.constants';
+import {
+  CampaignRewardType,
+  CampaignStatus,
+  CampaignType,
+} from './campaign.constants';
+import { MatchTemplateToCampaignType } from './campaign.validation';
 import { PaymentMethod } from 'src/payment/payment.constants';
 import { Transform, Type } from 'class-transformer';
 import { AutoMap } from '@automapper/classes';
@@ -118,6 +123,24 @@ export class CreateVoucherCampaignTemplateDto {
   @IsString({ each: true, message: 'Each slug in the array must be a string' })
   @Type(() => String)
   productSlugs?: string[];
+}
+
+export class CreateGiftCampaignTemplateDto {
+  @ApiProperty({ example: 'Quà tặng sinh nhật' })
+  @IsNotEmpty()
+  @IsString()
+  title: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ example: 30, required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  duration?: number | null;
 }
 
 export class UpdateVoucherCampaignTemplateDto {
@@ -257,6 +280,20 @@ export class VoucherCampaignTemplateResponseDto extends BaseResponseDto {
   productSlugs?: string[];
 }
 
+export class GiftCampaignTemplateResponseDto extends BaseResponseDto {
+  @AutoMap()
+  @ApiProperty()
+  title: string;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  description?: string;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  duration?: number;
+}
+
 export class CreateCampaignRequestDto {
   @AutoMap()
   @ApiProperty({ example: 'Chào mừng thành viên mới' })
@@ -278,32 +315,52 @@ export class CreateCampaignRequestDto {
   recipientLimit?: number;
 
   @AutoMap()
-  @ApiProperty({ example: '2024-01-01' })
+  @ApiProperty({ example: 'yyyy-mm-dd hh:mm:ss' })
   @IsNotEmpty()
   @IsDate()
   @Type(() => Date)
   startDate: Date;
 
   @AutoMap()
-  @ApiProperty({ example: '2024-12-31', required: false })
+  @ApiProperty({ example: 'yyyy-mm-dd hh:mm:ss', required: false })
   @IsOptional()
   @IsDate()
   @Type(() => Date)
   endDate?: Date;
 
-  @ApiProperty({ example: 'voucher-group-slug' })
+  @ApiProperty({
+    example: CampaignRewardType.VOUCHER,
+    enum: CampaignRewardType,
+  })
   @IsNotEmpty()
+  @IsEnum(CampaignRewardType)
+  @MatchTemplateToCampaignType()
+  campaignType: CampaignRewardType;
+
+  @ApiProperty({ example: 'voucher-group-slug' })
+  @IsOptional()
   @IsString()
   voucherGroupSlug: string;
 
   @ApiProperty({
     required: false,
     type: () => CreateVoucherCampaignTemplateDto,
+    description: 'Required when campaignType is "voucher"',
   })
   @IsOptional()
   @ValidateNested()
   @Type(() => CreateVoucherCampaignTemplateDto)
   voucherCampaignTemplate?: CreateVoucherCampaignTemplateDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => CreateGiftCampaignTemplateDto,
+    description: 'Required when campaignType is "gift"',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateGiftCampaignTemplateDto)
+  giftCampaignTemplate?: CreateGiftCampaignTemplateDto;
 }
 
 export class UpdateCampaignRequestDto {
@@ -404,4 +461,10 @@ export class CampaignResponseDto extends BaseResponseDto {
     type: () => VoucherCampaignTemplateResponseDto,
   })
   voucherCampaignTemplate?: VoucherCampaignTemplateResponseDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => GiftCampaignTemplateResponseDto,
+  })
+  giftCampaignTemplate?: GiftCampaignTemplateResponseDto;
 }

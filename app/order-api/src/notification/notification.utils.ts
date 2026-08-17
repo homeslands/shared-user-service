@@ -20,6 +20,7 @@ import { SystemConfigService } from 'src/system-config/system-config.service';
 import { SystemConfigKey } from 'src/system-config/system-config.constant';
 import { SystemConfigValidation } from 'src/system-config/system-config.validation';
 import { CardOrder } from 'src/gift-card-modules/card-order/entities/card-order.entity';
+import { Voucher } from 'src/voucher/entity/voucher.entity';
 
 @Injectable()
 export class NotificationUtils {
@@ -389,6 +390,63 @@ export class NotificationUtils {
         cardTitle: cardOrder.cardTitle,
         totalAmount: cardOrder.totalAmount?.toString(),
         createdAt: cardOrder.createdAt?.toISOString(),
+      },
+    };
+
+    await this.notificationProducer.createNotification(notificationData);
+  }
+
+  /**
+   * Send a notification to a customer who has just received a voucher
+   * (e.g. from a birthday or new-user campaign).
+   * @param {User} receiver - The user who received the voucher
+   * @param {Voucher} voucher - The received voucher
+   * @param {NotificationMessageCode} messageCode - The voucher message code
+   *   (VOUCHER_BIRTHDAY_RECEIVED | VOUCHER_NEW_USER_RECEIVED)
+   * @param {string} [campaignSlug] - The campaign that granted the voucher
+   */
+  async sendNotificationVoucherReceiving(
+    receiver: User,
+    voucher: Voucher,
+    messageCode: NotificationMessageCode,
+    campaignSlug?: string,
+  ) {
+    const context = `${NotificationUtils.name}.${this.sendNotificationVoucherReceiving.name}`;
+
+    if (!receiver) {
+      this.logger.error(
+        `Receiver not found for voucher ${voucher?.code}`,
+        context,
+      );
+      return;
+    }
+
+    const frontEndUrl = await this.getFrontendUrl();
+
+    const notificationMessage = this.notificationLanguageService.format(
+      messageCode,
+      {
+        voucherTitle: voucher.title,
+        voucherCode: voucher.code,
+      },
+      receiver.language as string,
+    );
+
+    const notificationData = {
+      message: messageCode,
+      receiverId: receiver.id,
+      receiverName: `${receiver.firstName} ${receiver.lastName}`,
+      type: NotificationType.VOUCHER,
+      title: notificationMessage.title,
+      body: notificationMessage.body,
+      language: receiver.language,
+      link: `${frontEndUrl}/profile/voucher`,
+      metadata: {
+        voucher: voucher.slug,
+        voucherCode: voucher.code,
+        voucherTitle: voucher.title,
+        campaignSlug,
+        createdAt: voucher.createdAt?.toISOString(),
       },
     };
 
