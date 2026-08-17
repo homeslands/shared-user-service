@@ -36,3 +36,9 @@ export enum AccountRevenueCustomerType {
   ALL = 'all',
   NEW_REGISTER = 'new-register',
 }
+
+export enum DobFilterType {
+  DAY = 'day', // filter by day of month only (1-31)
+  MONTH = 'month', // filter by month only (1-12)
+  DAY_MONTH = 'day_month', // filter by day + month (DD/MM)
+}

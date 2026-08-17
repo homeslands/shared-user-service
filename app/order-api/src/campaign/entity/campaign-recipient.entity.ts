@@ -33,4 +33,10 @@ export class CampaignRecipient extends Base {
   year?: number;
   // null  = one-time campaign (NEW_USER)
   // number = yearly campaign (USER_BIRTHDAY), e.g. 2026
+
+  // When the birthday greeting message was delivered for this recipient.
+  // Null = not sent yet. Together with UNIQUE(campaign, user, year) this makes
+  // the greeting at most once per user per campaign per year.
+  @Column({ name: 'greeted_at_column', type: 'timestamp', nullable: true })
+  greetedAt?: Date;
 }

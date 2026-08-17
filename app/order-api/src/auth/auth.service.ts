@@ -1523,15 +1523,21 @@ export class AuthService {
       user.branch = branch;
     }
 
-    if (requestData.dob) {
-      const [day, month] = requestData.dob.split('/');
-      user.dobDM = `${day}${month}`;
+    if ('dob' in requestData) {
+      const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
+      user.dobDM = day && month ? `${day}${month}` : null;
     }
     try {
       const updatedUser = await this.userRepository.save(user);
       this.logger.log(`User ${user.id} updated profile`, context);
-      if (requestData.dob && updatedUser.dobDM && this.isTodayBirthday(updatedUser.dobDM))
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, { user: updatedUser });
+      if (
+        requestData.dob &&
+        updatedUser.dobDM &&
+        this.isTodayBirthday(updatedUser.dobDM)
+      )
+        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
+          user: updatedUser,
+        });
       return this.mapper.map(updatedUser, User, AuthProfileResponseDto);
     } catch (error) {
       this.logger.error(
@@ -1646,7 +1652,10 @@ export class AuthService {
     requestData: InitiateRegisterRequestDto,
   ): Promise<InitiateRegisterResponseDto> {
     const context = `${AuthService.name}.${this.initiateRegister.name}`;
-    this.logger.log(`Request initiate register for ${requestData.phonenumber}`, context);
+    this.logger.log(
+      `Request initiate register for ${requestData.phonenumber}`,
+      context,
+    );
 
     const existingUser = await this.userRepository.findOne({
       where: { phonenumber: requestData.phonenumber },
@@ -1667,7 +1676,9 @@ export class AuthService {
     }
 
     const otp = getRandomString().slice(0, 6).toUpperCase();
-    const expiresAt = moment().add(60 * 10, 'seconds').toDate();
+    const expiresAt = moment()
+      .add(60 * 10, 'seconds')
+      .toDate();
 
     const registerOtpToken = new RegisterOtpToken();
     Object.assign(registerOtpToken, {
@@ -1679,100 +1690,109 @@ export class AuthService {
       isUsed: false,
     });
 
-    const result = await this.transactionManagerService.execute<RegisterOtpToken>(
-      async (manager) => {
-        const zaloOaConnectorConfig = await this.getZaloOaConnectorConfig(
-          ZaloOaStrategy.VERIFY_ACCOUNT,
-        );
-        const backendUrl = await this.getBackendUrl();
-        const expiresTime = moment(expiresAt).format('HH:mm DD/MM/YYYY');
-        const requestIdZns = getRandomString();
-        const requestIdSms = getRandomString();
-
-        const smsRequest = new ZaloOaInitiateSmsByMultiChannelMessageRequestDto();
-        smsRequest.ApiKey = this.zaloOaApiKey;
-        smsRequest.SecretKey = this.zaloOaSecretKey;
-        smsRequest.Phone = requestData.phonenumber;
-        smsRequest.Channels = [SMSChannel.ZALO, SMSChannel.SMS];
-        smsRequest.Data = [
-          {
-            TempID: zaloOaConnectorConfig.templateId,
-            Params: [otp, expiresTime],
-            OAID: this.zaloOaId,
-            campaignid: zaloOaConnectorConfig.strategy,
-            CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
-            RequestId: requestIdZns,
-            Sandbox: '0',
-            SendingMode: '1',
-          } as ZaloDataRequestDto,
-          {
-            Content: fillVerifyAccountContent(otp, expiresTime),
-            IsUnicode: '0',
-            SmsType: '2',
-            Brandname: 'TrendCoffee',
-            CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
-            RequestId: requestIdSms,
-            Sandbox: '0',
-          } as SmsDataRequestDto,
-        ];
-
-        const zaloResponse =
-          await this.zaloOaConnectorClient.initiateVerifyPhoneNumberSmsByMultiChannelMessage(
-            smsRequest,
+    const result =
+      await this.transactionManagerService.execute<RegisterOtpToken>(
+        async (manager) => {
+          const zaloOaConnectorConfig = await this.getZaloOaConnectorConfig(
+            ZaloOaStrategy.VERIFY_ACCOUNT,
           );
+          const backendUrl = await this.getBackendUrl();
+          const expiresTime = moment(expiresAt).format('HH:mm DD/MM/YYYY');
+          const requestIdZns = getRandomString();
+          const requestIdSms = getRandomString();
 
-        if (zaloResponse.ErrorMessage) {
-          this.logger.error(
-            `Error sending registration OTP: ${zaloResponse.ErrorMessage}`,
+          const smsRequest =
+            new ZaloOaInitiateSmsByMultiChannelMessageRequestDto();
+          smsRequest.ApiKey = this.zaloOaApiKey;
+          smsRequest.SecretKey = this.zaloOaSecretKey;
+          smsRequest.Phone = requestData.phonenumber;
+          smsRequest.Channels = [SMSChannel.ZALO, SMSChannel.SMS];
+          smsRequest.Data = [
+            {
+              TempID: zaloOaConnectorConfig.templateId,
+              Params: [otp, expiresTime],
+              OAID: this.zaloOaId,
+              campaignid: zaloOaConnectorConfig.strategy,
+              CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
+              RequestId: requestIdZns,
+              Sandbox: '0',
+              SendingMode: '1',
+            } as ZaloDataRequestDto,
+            {
+              Content: fillVerifyAccountContent(otp, expiresTime),
+              IsUnicode: '0',
+              SmsType: '2',
+              Brandname: 'TrendCoffee',
+              CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
+              RequestId: requestIdSms,
+              Sandbox: '0',
+            } as SmsDataRequestDto,
+          ];
+
+          const zaloResponse =
+            await this.zaloOaConnectorClient.initiateVerifyPhoneNumberSmsByMultiChannelMessage(
+              smsRequest,
+            );
+
+          if (zaloResponse.ErrorMessage) {
+            this.logger.error(
+              `Error sending registration OTP: ${zaloResponse.ErrorMessage}`,
+              context,
+            );
+            throw new ZaloOaConnectorException(
+              ZaloOaConnectorValidation.ERROR_INITIATE_SMS_VERIFY_ACCOUNT,
+            );
+          }
+
+          const createdToken = await manager.save(registerOtpToken);
+
+          if (zaloResponse.SMSID) {
+            const history = new ZaloOaConnectorHistory();
+            Object.assign(history, {
+              tokenId: createdToken.id,
+              smsId: zaloResponse.SMSID,
+              requestId: `${requestIdZns}-${requestIdSms}`,
+              templateId: zaloOaConnectorConfig.templateId,
+              strategy: zaloOaConnectorConfig.strategy,
+            });
+            await manager.save(history);
+          }
+
+          return createdToken;
+        },
+        () => {
+          this.logger.log(
+            `Registration OTP sent to ${requestData.phonenumber}`,
             context,
           );
-          throw new ZaloOaConnectorException(
-            ZaloOaConnectorValidation.ERROR_INITIATE_SMS_VERIFY_ACCOUNT,
+        },
+        (error) => {
+          this.logger.error(
+            `Error initiating registration OTP`,
+            error.stack,
+            context,
           );
-        }
+          throw new AuthException(
+            AuthValidation.ERROR_CREATE_VERIFY_PHONE_NUMBER_TOKEN,
+          );
+        },
+      );
 
-        const createdToken = await manager.save(registerOtpToken);
-
-        if (zaloResponse.SMSID) {
-          const history = new ZaloOaConnectorHistory();
-          Object.assign(history, {
-            tokenId: createdToken.id,
-            smsId: zaloResponse.SMSID,
-            requestId: `${requestIdZns}-${requestIdSms}`,
-            templateId: zaloOaConnectorConfig.templateId,
-            strategy: zaloOaConnectorConfig.strategy,
-          });
-          await manager.save(history);
-        }
-
-        return createdToken;
-      },
-      () => {
-        this.logger.log(
-          `Registration OTP sent to ${requestData.phonenumber}`,
-          context,
-        );
-      },
-      (error) => {
-        this.logger.error(
-          `Error initiating registration OTP`,
-          error.stack,
-          context,
-        );
-        throw new AuthException(
-          AuthValidation.ERROR_CREATE_VERIFY_PHONE_NUMBER_TOKEN,
-        );
-      },
+    return this.mapper.map(
+      result,
+      RegisterOtpToken,
+      InitiateRegisterResponseDto,
     );
-
-    return this.mapper.map(result, RegisterOtpToken, InitiateRegisterResponseDto);
   }
 
   async resendRegisterOtp(
     requestData: ResendRegisterOtpRequestDto,
   ): Promise<InitiateRegisterResponseDto> {
     const context = `${AuthService.name}.${this.resendRegisterOtp.name}`;
-    this.logger.log(`Request resend register OTP for ${requestData.phonenumber}`, context);
+    this.logger.log(
+      `Request resend register OTP for ${requestData.phonenumber}`,
+      context,
+    );
 
     const registerOtpToken = await this.registerOtpTokenRepository.findOne({
       where: {
@@ -1794,107 +1814,118 @@ export class AuthService {
     }
 
     const newOtp = getRandomString().slice(0, 6).toUpperCase();
-    const newExpiresAt = moment().add(60 * 10, 'seconds').toDate();
+    const newExpiresAt = moment()
+      .add(60 * 10, 'seconds')
+      .toDate();
 
     registerOtpToken.token = newOtp;
     registerOtpToken.expiresAt = newExpiresAt;
     registerOtpToken.lastSentAt = new Date();
     registerOtpToken.attemptCount = 0;
 
-    const result = await this.transactionManagerService.execute<RegisterOtpToken>(
-      async (manager) => {
-        const zaloOaConnectorConfig = await this.getZaloOaConnectorConfig(
-          ZaloOaStrategy.VERIFY_ACCOUNT,
-        );
-        const backendUrl = await this.getBackendUrl();
-        const expiresTime = moment(newExpiresAt).format('HH:mm DD/MM/YYYY');
-        const requestIdZns = getRandomString();
-        const requestIdSms = getRandomString();
-
-        const smsRequest = new ZaloOaInitiateSmsByMultiChannelMessageRequestDto();
-        smsRequest.ApiKey = this.zaloOaApiKey;
-        smsRequest.SecretKey = this.zaloOaSecretKey;
-        smsRequest.Phone = requestData.phonenumber;
-        smsRequest.Channels = [SMSChannel.ZALO, SMSChannel.SMS];
-        smsRequest.Data = [
-          {
-            TempID: zaloOaConnectorConfig.templateId,
-            Params: [newOtp, expiresTime],
-            OAID: this.zaloOaId,
-            campaignid: zaloOaConnectorConfig.strategy,
-            CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
-            RequestId: requestIdZns,
-            Sandbox: '0',
-            SendingMode: '1',
-          } as ZaloDataRequestDto,
-          {
-            Content: fillVerifyAccountContent(newOtp, expiresTime),
-            IsUnicode: '0',
-            SmsType: '2',
-            Brandname: 'TrendCoffee',
-            CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
-            RequestId: requestIdSms,
-            Sandbox: '0',
-          } as SmsDataRequestDto,
-        ];
-
-        const zaloResponse =
-          await this.zaloOaConnectorClient.initiateVerifyPhoneNumberSmsByMultiChannelMessage(
-            smsRequest,
+    const result =
+      await this.transactionManagerService.execute<RegisterOtpToken>(
+        async (manager) => {
+          const zaloOaConnectorConfig = await this.getZaloOaConnectorConfig(
+            ZaloOaStrategy.VERIFY_ACCOUNT,
           );
+          const backendUrl = await this.getBackendUrl();
+          const expiresTime = moment(newExpiresAt).format('HH:mm DD/MM/YYYY');
+          const requestIdZns = getRandomString();
+          const requestIdSms = getRandomString();
 
-        if (zaloResponse.ErrorMessage) {
-          this.logger.error(
-            `Error resending registration OTP: ${zaloResponse.ErrorMessage}`,
+          const smsRequest =
+            new ZaloOaInitiateSmsByMultiChannelMessageRequestDto();
+          smsRequest.ApiKey = this.zaloOaApiKey;
+          smsRequest.SecretKey = this.zaloOaSecretKey;
+          smsRequest.Phone = requestData.phonenumber;
+          smsRequest.Channels = [SMSChannel.ZALO, SMSChannel.SMS];
+          smsRequest.Data = [
+            {
+              TempID: zaloOaConnectorConfig.templateId,
+              Params: [newOtp, expiresTime],
+              OAID: this.zaloOaId,
+              campaignid: zaloOaConnectorConfig.strategy,
+              CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
+              RequestId: requestIdZns,
+              Sandbox: '0',
+              SendingMode: '1',
+            } as ZaloDataRequestDto,
+            {
+              Content: fillVerifyAccountContent(newOtp, expiresTime),
+              IsUnicode: '0',
+              SmsType: '2',
+              Brandname: 'TrendCoffee',
+              CallbackUrl: `${backendUrl}/zalo-oa-connector/callback/status`,
+              RequestId: requestIdSms,
+              Sandbox: '0',
+            } as SmsDataRequestDto,
+          ];
+
+          const zaloResponse =
+            await this.zaloOaConnectorClient.initiateVerifyPhoneNumberSmsByMultiChannelMessage(
+              smsRequest,
+            );
+
+          if (zaloResponse.ErrorMessage) {
+            this.logger.error(
+              `Error resending registration OTP: ${zaloResponse.ErrorMessage}`,
+              context,
+            );
+            throw new ZaloOaConnectorException(
+              ZaloOaConnectorValidation.ERROR_INITIATE_SMS_VERIFY_ACCOUNT,
+            );
+          }
+
+          const updatedToken = await manager.save(registerOtpToken);
+
+          if (zaloResponse.SMSID) {
+            const history = new ZaloOaConnectorHistory();
+            Object.assign(history, {
+              tokenId: updatedToken.id,
+              smsId: zaloResponse.SMSID,
+              requestId: `${requestIdZns}-${requestIdSms}`,
+              templateId: zaloOaConnectorConfig.templateId,
+              strategy: zaloOaConnectorConfig.strategy,
+            });
+            await manager.save(history);
+          }
+
+          return updatedToken;
+        },
+        () => {
+          this.logger.log(
+            `Registration OTP resent to ${requestData.phonenumber}`,
             context,
           );
-          throw new ZaloOaConnectorException(
-            ZaloOaConnectorValidation.ERROR_INITIATE_SMS_VERIFY_ACCOUNT,
+        },
+        (error) => {
+          this.logger.error(
+            `Error resending registration OTP`,
+            error.stack,
+            context,
           );
-        }
+          throw new AuthException(
+            AuthValidation.ERROR_CREATE_VERIFY_PHONE_NUMBER_TOKEN,
+          );
+        },
+      );
 
-        const updatedToken = await manager.save(registerOtpToken);
-
-        if (zaloResponse.SMSID) {
-          const history = new ZaloOaConnectorHistory();
-          Object.assign(history, {
-            tokenId: updatedToken.id,
-            smsId: zaloResponse.SMSID,
-            requestId: `${requestIdZns}-${requestIdSms}`,
-            templateId: zaloOaConnectorConfig.templateId,
-            strategy: zaloOaConnectorConfig.strategy,
-          });
-          await manager.save(history);
-        }
-
-        return updatedToken;
-      },
-      () => {
-        this.logger.log(
-          `Registration OTP resent to ${requestData.phonenumber}`,
-          context,
-        );
-      },
-      (error) => {
-        this.logger.error(
-          `Error resending registration OTP`,
-          error.stack,
-          context,
-        );
-        throw new AuthException(
-          AuthValidation.ERROR_CREATE_VERIFY_PHONE_NUMBER_TOKEN,
-        );
-      },
+    return this.mapper.map(
+      result,
+      RegisterOtpToken,
+      InitiateRegisterResponseDto,
     );
-
-    return this.mapper.map(result, RegisterOtpToken, InitiateRegisterResponseDto);
   }
 
   async completeRegister(
     requestData: CompleteRegisterRequestDto,
   ): Promise<LoginAuthResponseDto> {
     const context = `${AuthService.name}.${this.completeRegister.name}`;
-    this.logger.log(`Request complete register for ${requestData.phonenumber}`, context);
+    this.logger.log(
+      `Request complete register for ${requestData.phonenumber}`,
+      context,
+    );
 
     const registerOtpToken = await this.registerOtpTokenRepository.findOne({
       where: {
@@ -2127,9 +2158,13 @@ export class AuthService {
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
 
     if (createdUser) {
-      this.eventEmitter.emit(CampaignAction.USER_CREATED, { user: createdUser });
+      this.eventEmitter.emit(CampaignAction.USER_CREATED, {
+        user: createdUser,
+      });
       if (createdUser.dobDM && this.isTodayBirthday(createdUser.dobDM))
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, { user: createdUser });
+        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
+          user: createdUser,
+        });
     }
 
     return this.mapper.map(createdUser, User, RegisterAuthResponseDto);
@@ -2261,6 +2296,7 @@ export class AuthService {
     user.firstName = null;
     user.lastName = null;
     user.dob = null;
+    user.dobDM = null;
     user.email = null;
     user.address = null;
     user.image = null;

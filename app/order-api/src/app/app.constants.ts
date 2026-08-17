@@ -8,10 +8,12 @@ export enum QueueRegisterKey {
   PRINTER_EVENT = 'printer-event',
   MIGRATE_FILE_FROM_DATABASE_TO_S3 = 'migrate-file-from-database-to-s3',
   SHARED_REDIS = 'shared-redis',
+  USER_BIRTHDAY = 'user-birthday',
 }
 
 export enum DistributeLockJobKey {
   REFRESH_BRANCH_REVENUE = 'refresh-branch-revenue',
   GENERATE_MENU_EVERY_DAY_AT_1AM = 'generate-menu-every-day-at-1am',
   REFRESH_PRODUCT_ANALYSIS = 'refresh-product-analysis',
+  SEND_BIRTHDAY_EVERY_DAY_AT_1AM = 'send-birthday-every-day-at-1am',
 }

@@ -2,20 +2,22 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { User } from 'src/user/user.entity';
+// import { User } from 'src/user/user.entity';
 import { LessThan, LessThanOrEqual, Repository } from 'typeorm';
-import { CampaignStatus, CampaignType } from './campaign.constants';
-import { CampaignService } from './campaign.service';
+import { CampaignStatus } from './campaign.constants';
+// import { CampaignService } from './campaign.service';
 import { Campaign } from './entity/campaign.entity';
 
 @Injectable()
 export class CampaignScheduler {
   constructor(
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
+    // userRepository & campaignService chỉ phục vụ handleBirthdayCampaigns (đã
+    // tạm ẩn); luồng sinh nhật gộp về UserScheduler. Bỏ tạm để tránh unused.
+    // @InjectRepository(User)
+    // private readonly userRepository: Repository<User>,
     @InjectRepository(Campaign)
     private readonly campaignRepository: Repository<Campaign>,
-    private readonly campaignService: CampaignService,
+    // private readonly campaignService: CampaignService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger,
   ) {}
 
@@ -50,6 +52,10 @@ export class CampaignScheduler {
     }
   }
 
+  // NOTE: Luồng cấp voucher sinh nhật theo ngày-of (1AM) đã được tạm ẩn để chỉ
+  // giữ một luồng sinh nhật duy nhất ở UserScheduler.BirthdayStrategyScheduler
+  // (chạy 4AM, gửi trước 1 ngày). Tránh chạy song song hai luồng USER_BIRTHDAY.
+  /*
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async handleBirthdayCampaigns(): Promise<void> {
     const context = `${CampaignScheduler.name}.${this.handleBirthdayCampaigns.name}`;
@@ -82,4 +88,5 @@ export class CampaignScheduler {
       }
     }
   }
+  */
 }
