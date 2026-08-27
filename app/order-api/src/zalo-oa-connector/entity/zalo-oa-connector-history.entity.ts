@@ -1,13 +1,18 @@
-import { Column, Entity } from 'typeorm';
+import { BeforeInsert, BeforeUpdate, Column, Entity } from 'typeorm';
 import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
+import { ZaloOaStrategy } from '../zalo-oa-connector.constants';
+import { ZaloOaConnectorException } from '../zalo-oa-connector.exception';
+import { ZaloOaConnectorValidation } from '../zalo-oa-connector.validation';
 
 @Entity('zalo_oa_connector_history_tbl')
 export class ZaloOaConnectorHistory extends Base {
-  // The id of verify phone number token entity
+  // The id of verify phone number token entity.
+  // Only the birthday strategy is allowed to leave this null; every other
+  // strategy still requires a token id.
   @AutoMap()
-  @Column({ name: 'token_id_column' })
-  tokenId: string;
+  @Column({ name: 'token_id_column', nullable: true })
+  tokenId?: string;
 
   @AutoMap()
   @Column({ name: 'sms_id_column' })
@@ -40,4 +45,14 @@ export class ZaloOaConnectorHistory extends Base {
   @AutoMap()
   @Column({ name: 'error_info_column', nullable: true })
   errorInfo: string;
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  validateTokenId() {
+    if (this.strategy !== ZaloOaStrategy.BIRTHDAY && !this.tokenId) {
+      throw new ZaloOaConnectorException(
+        ZaloOaConnectorValidation.ZALO_OA_CONNECTOR_HISTORY_TOKEN_ID_REQUIRED,
+      );
+    }
+  }
 }

@@ -40,7 +40,7 @@ export class PointTransactionController {
     private readonly pointTransactionService: PointTransactionService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
-  ) { }
+  ) {}
 
   @Get(':slug/export')
   @ApiOperation({ summary: 'Export point transaction' })

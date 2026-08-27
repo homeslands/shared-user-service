@@ -16,6 +16,7 @@ import { RoleResponseDto } from 'src/role/role.dto';
 import { INVALID_LANGUAGE } from './user.validation';
 import {
   AccountRevenueCustomerType,
+  DobFilterType,
   UserLanguage,
   UserStatisticsGroupBy,
 } from './user.constant';
@@ -278,6 +279,79 @@ export class GetAllUserQueryRequestDto extends BaseQueryDto {
     message: 'Format: YYYY-MM-DDTHH:mm:ss (local time, no timezone)',
   })
   endDate?: string;
+
+  @ApiProperty({
+    description:
+      'Filter users whose birthday (day/month) is from this date, format: dd/mm',
+    example: '01/01',
+    required: false,
+  })
+  @IsOptional()
+  @Matches(/^(0[1-9]|[12]\d|3[0-1])\/(0[1-9]|1[0-2])$/, {
+    message: 'Invalid birthday from date format dd/mm',
+  })
+  birthdayFromDate?: string;
+
+  @ApiProperty({
+    description:
+      'Filter users whose birthday (day/month) is up to this date, format: dd/mm',
+    example: '31/12',
+    required: false,
+  })
+  @IsOptional()
+  @Matches(/^(0[1-9]|[12]\d|3[0-1])\/(0[1-9]|1[0-2])$/, {
+    message: 'Invalid birthday to date format dd/mm',
+  })
+  birthdayToDate?: string;
+}
+
+export class ExportUserQueryRequestDto {
+  @AutoMap()
+  @ApiProperty({
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.split(',') : [value],
+  )
+  role: string[] = [];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  phonenumber?: string;
+
+  @ApiProperty({
+    description:
+      'Granularity of the date of birth range. ' +
+      '"day" -> bounds are a day (1-31), "month" -> bounds are a month (1-12), ' +
+      '"day_month" -> bounds are day+month (DD/MM). The year is always ignored.',
+    enum: DobFilterType,
+    default: DobFilterType.DAY_MONTH,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(DobFilterType, { message: 'Invalid dob filter type' })
+  dobFilterType?: DobFilterType = DobFilterType.DAY_MONTH;
+
+  @ApiProperty({
+    description:
+      'Start of the date of birth range (year ignored). ' +
+      'Format depends on dobFilterType: "5" (day/month) or "01/06" (day_month).',
+    example: '01/06',
+    required: false,
+  })
+  @IsOptional()
+  dobStartDate?: string;
+
+  @ApiProperty({
+    description:
+      'End of the date of birth range (year ignored). ' +
+      'Format depends on dobFilterType: "15" (day/month) or "31/08" (day_month).',
+    example: '31/08',
+    required: false,
+  })
+  @IsOptional()
+  dobEndDate?: string;
 }
 
 export class GetUserStatisticsQueryRequestDto {
@@ -628,4 +702,22 @@ export class AggregateAccountRevenueResponseDto {
   @AutoMap()
   @ApiProperty({ example: 100 })
   total: number;
+}
+
+export class BirthdayStrategyResponseDto {
+  @AutoMap()
+  @ApiProperty()
+  userSlug: string;
+
+  @AutoMap()
+  @ApiProperty()
+  phoneNumber: string;
+
+  @AutoMap()
+  @ApiProperty()
+  dob: string;
+
+  @AutoMap()
+  @ApiProperty()
+  channelReceiver?: string;
 }

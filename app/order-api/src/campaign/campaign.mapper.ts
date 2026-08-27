@@ -9,9 +9,13 @@ import {
 import { Injectable } from '@nestjs/common';
 import { Campaign } from './entity/campaign.entity';
 import { VoucherCampaignTemplate } from './entity/voucher-campaign-template.entity';
+import { GiftCampaignTemplate } from './entity/gift-campaign-template.entity';
+import { CoinCampaignTemplate } from './entity/coin-campaign-template.entity';
 import {
   CampaignResponseDto,
+  CoinCampaignTemplateResponseDto,
   CreateCampaignRequestDto,
+  GiftCampaignTemplateResponseDto,
   VoucherCampaignTemplateResponseDto,
 } from './campaign.dto';
 import { baseMapper } from 'src/app/base.mapper';
@@ -41,6 +45,18 @@ export class CampaignProfile extends AutomapperProfile {
       );
       createMap(
         mapper,
+        GiftCampaignTemplate,
+        GiftCampaignTemplateResponseDto,
+        extend(baseMapper(mapper)),
+      );
+      createMap(
+        mapper,
+        CoinCampaignTemplate,
+        CoinCampaignTemplateResponseDto,
+        extend(baseMapper(mapper)),
+      );
+      createMap(
+        mapper,
         Campaign,
         CampaignResponseDto,
         forMember(
@@ -59,6 +75,30 @@ export class CampaignProfile extends AutomapperProfile {
                   src.voucherCampaignTemplate,
                   VoucherCampaignTemplate,
                   VoucherCampaignTemplateResponseDto,
+                )
+              : undefined,
+          ),
+        ),
+        forMember(
+          (dest) => dest.giftCampaignTemplate,
+          mapFrom((src) =>
+            src.giftCampaignTemplate
+              ? mapper.map(
+                  src.giftCampaignTemplate,
+                  GiftCampaignTemplate,
+                  GiftCampaignTemplateResponseDto,
+                )
+              : undefined,
+          ),
+        ),
+        forMember(
+          (dest) => dest.coinCampaignTemplate,
+          mapFrom((src) =>
+            src.coinCampaignTemplate
+              ? mapper.map(
+                  src.coinCampaignTemplate,
+                  CoinCampaignTemplate,
+                  CoinCampaignTemplateResponseDto,
                 )
               : undefined,
           ),

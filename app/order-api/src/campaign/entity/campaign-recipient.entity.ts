@@ -26,6 +26,11 @@ export class CampaignRecipient extends Base {
   @JoinColumn({ name: 'voucher_column' })
   voucher?: Voucher;
 
+  // Denormalized coin amount credited to this recipient (== the coin template's
+  // coinPerUser at the time of crediting). Nullable — only set for COIN recipients.
+  @Column({ name: 'coin_amount_column', nullable: true, type: 'int' })
+  coinAmount?: number;
+
   @Column({ name: 'received_at_column', type: 'timestamp' })
   receivedAt: Date;
 
@@ -33,4 +38,10 @@ export class CampaignRecipient extends Base {
   year?: number;
   // null  = one-time campaign (NEW_USER)
   // number = yearly campaign (USER_BIRTHDAY), e.g. 2026
+
+  // When the birthday greeting message was delivered for this recipient.
+  // Null = not sent yet. Together with UNIQUE(campaign, user, year) this makes
+  // the greeting at most once per user per campaign per year.
+  @Column({ name: 'greeted_at_column', type: 'timestamp', nullable: true })
+  greetedAt?: Date;
 }

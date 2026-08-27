@@ -18,6 +18,7 @@ import {
 import { PointTransactionValidation } from 'src/gift-card-modules/point-transaction/point-transaction.validation';
 import { PointTransactionException } from 'src/gift-card-modules/point-transaction/point-transaction.exception';
 import { CardOrder } from 'src/gift-card-modules/card-order/entities/card-order.entity';
+import { Campaign } from 'src/campaign/entity/campaign.entity';
 
 @Injectable()
 export class SharedPointTransactionService {
@@ -33,12 +34,14 @@ export class SharedPointTransactionService {
     private userRepository: Repository<User>,
     @InjectRepository(CardOrder)
     private coRepository: Repository<CardOrder>,
+    @InjectRepository(Campaign)
+    private campaignRepository: Repository<Campaign>,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectMapper()
     private readonly mapper: Mapper,
     private readonly transactionService: TransactionManagerService,
-  ) { }
+  ) {}
 
   async create(req: CreatePointTransactionDto) {
     const context = `${PointTransaction.name}.${this.create.name}`;
@@ -71,7 +74,7 @@ export class SharedPointTransactionService {
       );
     }
 
-    let objectRef: Order | GiftCard | CardOrder = null;
+    let objectRef: Order | GiftCard | CardOrder | Campaign = null;
 
     switch (payload.objectType) {
       case PointTransactionObjectTypeEnum.ORDER:
@@ -86,6 +89,11 @@ export class SharedPointTransactionService {
         break;
       case PointTransactionObjectTypeEnum.CARD_ORDER:
         objectRef = await this.coRepository.findOne({
+          where: { slug: payload.objectSlug },
+        });
+        break;
+      case PointTransactionObjectTypeEnum.CAMPAIGN:
+        objectRef = await this.campaignRepository.findOne({
           where: { slug: payload.objectSlug },
         });
         break;

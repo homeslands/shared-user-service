@@ -40,34 +40,6 @@ export class ZaloOaConnectorClient {
     return zaloOaApiUrl;
   }
 
-  async initiateVerifyPhoneNumberSms(requestData: ZaloOaInitiateSmsRequestDto) {
-    const context = `${ZaloOaConnectorClient.name}.${this.initiateVerifyPhoneNumberSms.name}`;
-    const requestUrl = `${await this.getZaloOaApiUrl()}/MainService.svc/json/SendZaloMessage_V6/`;
-    const { data } = await firstValueFrom(
-      this.httpService
-        .post<ZaloOaInitiateSmsResponseDto>(requestUrl, requestData, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
-        .pipe(
-          catchError((error: AxiosError) => {
-            this.logger.error(
-              `Initiate SMS verify phone number failed: ${JSON.stringify(error.response?.data)}`,
-              error.stack,
-              context,
-            );
-            throw new ZaloOaConnectorException(
-              ZaloOaConnectorValidation.INITIATE_SMS_VERIFY_ACCOUNT_FAIL,
-              error.message,
-            );
-          }),
-        ),
-    );
-    this.logger.log(`Initiate SMS verify phone number success`, context);
-    return data;
-  }
-
   /**
    * Initiate SMS verify phone number by multi channel message
    * Priority: Zalo > SMS
@@ -102,6 +74,39 @@ export class ZaloOaConnectorClient {
     );
     this.logger.log(
       `Initiate SMS verify phone number by multi channel message success`,
+      context,
+    );
+    return data;
+  }
+
+  async initiateBirthdaySmsByMultiChannelMessage(
+    requestData: ZaloOaInitiateSmsByMultiChannelMessageRequestDto,
+  ) {
+    const context = `${ZaloOaConnectorClient.name}.${this.initiateBirthdaySmsByMultiChannelMessage.name}`;
+    const requestUrl = `${await this.getZaloOaApiUrl()}/MainService.svc/json/MultiChannelMessage/`;
+    const { data } = await firstValueFrom(
+      this.httpService
+        .post<ZaloOaInitiateSmsResponseDto>(requestUrl, requestData, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+        .pipe(
+          catchError((error: AxiosError) => {
+            this.logger.error(
+              `Initiate SMS birthday by multi channel message failed: ${JSON.stringify(error.response?.data)}`,
+              error.stack,
+              context,
+            );
+            throw new ZaloOaConnectorException(
+              ZaloOaConnectorValidation.ERROR_INITIATE_SMS_BIRTHDAY_BY_MULTI_CHANNEL_MESSAGE,
+              error.message,
+            );
+          }),
+        ),
+    );
+    this.logger.log(
+      `Initiate SMS birthday by multi channel message success`,
       context,
     );
     return data;

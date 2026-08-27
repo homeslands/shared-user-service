@@ -4,12 +4,23 @@ export enum NotificationType {
   ORDER = 'order',
   CARD_ORDER = 'card-order',
   VOUCHER = 'voucher',
+  GIFT = 'gift',
+  COIN = 'coin',
 }
 
 export enum NotificationMessageCode {
   // voucher
   VOUCHER_BIRTHDAY_RECEIVED = 'voucher-birthday-received',
   VOUCHER_NEW_USER_RECEIVED = 'voucher-new-user-received',
+
+  // gift
+  GIFT_BIRTHDAY_RECEIVED = 'gift-birthday-received',
+
+  // coin
+  COIN_NEW_USER_RECEIVED = 'coin-new-user-received',
+
+  // admin
+  COIN_CAMPAIGN_BUDGET_EXHAUSTED = 'coin-campaign-budget-exhausted',
 
   // staff
   ORDER_NEEDS_PROCESSED = 'order-needs-processed',

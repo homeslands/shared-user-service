@@ -12,7 +12,12 @@ import {
   IsArray,
   ValidateNested,
 } from 'class-validator';
-import { CampaignStatus, CampaignType } from './campaign.constants';
+import {
+  CampaignRewardType,
+  CampaignStatus,
+  CampaignType,
+} from './campaign.constants';
+import { MatchTemplateToCampaignType } from './campaign.validation';
 import { PaymentMethod } from 'src/payment/payment.constants';
 import { Transform, Type } from 'class-transformer';
 import { AutoMap } from '@automapper/classes';
@@ -120,6 +125,53 @@ export class CreateVoucherCampaignTemplateDto {
   productSlugs?: string[];
 }
 
+export class CreateGiftCampaignTemplateDto {
+  @ApiProperty({ example: 'Quà tặng sinh nhật' })
+  @IsNotEmpty()
+  @IsString()
+  title: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ example: 30, required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  duration?: number | null;
+}
+
+export class CreateCoinCampaignTemplateDto {
+  @ApiProperty({ example: 'Tặng xu thành viên mới' })
+  @IsNotEmpty()
+  @IsString()
+  title: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ example: 1000, description: 'Coins credited to each user' })
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(1)
+  coinPerUser: number;
+
+  @ApiProperty({
+    example: 100000,
+    required: false,
+    description:
+      'Total coin budget of the campaign; omit for an unlimited budget',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  totalCoinLimit?: number;
+}
+
 export class UpdateVoucherCampaignTemplateDto {
   @ApiProperty({ required: false })
   @IsOptional()
@@ -203,6 +255,30 @@ export class UpdateVoucherCampaignTemplateDto {
   productSlugs?: string[];
 }
 
+export class UpdateCoinCampaignTemplateDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  coinPerUser?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  totalCoinLimit?: number;
+}
+
 export class VoucherCampaignTemplateResponseDto extends BaseResponseDto {
   @AutoMap()
   @ApiProperty()
@@ -257,6 +333,42 @@ export class VoucherCampaignTemplateResponseDto extends BaseResponseDto {
   productSlugs?: string[];
 }
 
+export class GiftCampaignTemplateResponseDto extends BaseResponseDto {
+  @AutoMap()
+  @ApiProperty()
+  title: string;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  description?: string;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  duration?: number;
+}
+
+export class CoinCampaignTemplateResponseDto extends BaseResponseDto {
+  @AutoMap()
+  @ApiProperty()
+  title: string;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  description?: string;
+
+  @AutoMap()
+  @ApiProperty()
+  coinPerUser: number;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  totalCoinLimit?: number;
+
+  @AutoMap()
+  @ApiProperty({ required: false })
+  remainingCoin?: number;
+}
+
 export class CreateCampaignRequestDto {
   @AutoMap()
   @ApiProperty({ example: 'Chào mừng thành viên mới' })
@@ -278,32 +390,62 @@ export class CreateCampaignRequestDto {
   recipientLimit?: number;
 
   @AutoMap()
-  @ApiProperty({ example: '2024-01-01' })
+  @ApiProperty({ example: 'yyyy-mm-dd hh:mm:ss' })
   @IsNotEmpty()
   @IsDate()
   @Type(() => Date)
   startDate: Date;
 
   @AutoMap()
-  @ApiProperty({ example: '2024-12-31', required: false })
+  @ApiProperty({ example: 'yyyy-mm-dd hh:mm:ss', required: false })
   @IsOptional()
   @IsDate()
   @Type(() => Date)
   endDate?: Date;
 
-  @ApiProperty({ example: 'voucher-group-slug' })
+  @ApiProperty({
+    example: CampaignRewardType.VOUCHER,
+    enum: CampaignRewardType,
+  })
   @IsNotEmpty()
+  @IsEnum(CampaignRewardType)
+  @MatchTemplateToCampaignType()
+  campaignType: CampaignRewardType;
+
+  @ApiProperty({ example: 'voucher-group-slug' })
+  @IsOptional()
   @IsString()
   voucherGroupSlug: string;
 
   @ApiProperty({
     required: false,
     type: () => CreateVoucherCampaignTemplateDto,
+    description: 'Required when campaignType is "voucher"',
   })
   @IsOptional()
   @ValidateNested()
   @Type(() => CreateVoucherCampaignTemplateDto)
   voucherCampaignTemplate?: CreateVoucherCampaignTemplateDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => CreateGiftCampaignTemplateDto,
+    description: 'Required when campaignType is "gift"',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateGiftCampaignTemplateDto)
+  giftCampaignTemplate?: CreateGiftCampaignTemplateDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => CreateCoinCampaignTemplateDto,
+    description: 'Required when campaignType is "coin"',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateCoinCampaignTemplateDto)
+  coinCampaignTemplate?: CreateCoinCampaignTemplateDto;
 }
 
 export class UpdateCampaignRequestDto {
@@ -348,6 +490,15 @@ export class UpdateCampaignRequestDto {
   @ValidateNested()
   @Type(() => UpdateVoucherCampaignTemplateDto)
   voucherCampaignTemplate?: UpdateVoucherCampaignTemplateDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => UpdateCoinCampaignTemplateDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateCoinCampaignTemplateDto)
+  coinCampaignTemplate?: UpdateCoinCampaignTemplateDto;
 }
 
 export class GetAllCampaignQueryRequestDto extends BaseQueryDto {
@@ -404,4 +555,16 @@ export class CampaignResponseDto extends BaseResponseDto {
     type: () => VoucherCampaignTemplateResponseDto,
   })
   voucherCampaignTemplate?: VoucherCampaignTemplateResponseDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => GiftCampaignTemplateResponseDto,
+  })
+  giftCampaignTemplate?: GiftCampaignTemplateResponseDto;
+
+  @ApiProperty({
+    required: false,
+    type: () => CoinCampaignTemplateResponseDto,
+  })
+  coinCampaignTemplate?: CoinCampaignTemplateResponseDto;
 }

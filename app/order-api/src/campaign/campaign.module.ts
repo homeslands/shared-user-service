@@ -14,13 +14,20 @@ import { CampaignScheduler } from './campaign.scheduler';
 import { CampaignService } from './campaign.service';
 import { NewUserCampaignStrategy } from './strategy/new-user-campaign/new-user-campaign.strategy';
 import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/user-birthday-campaign.strategy';
+import { GiftBirthdayCampaignStrategy } from './strategy/gift-birthday-campaign/gift-birthday-campaign.strategy';
+import { GiftCampaignTemplate } from './entity/gift-campaign-template.entity';
+import { CoinCampaignTemplate } from './entity/coin-campaign-template.entity';
+import { SharedModule } from 'src/shared/shared.module';
 
 @Module({
   imports: [
+    SharedModule,
     TypeOrmModule.forFeature([
       Campaign,
       CampaignRecipient,
       VoucherCampaignTemplate,
+      GiftCampaignTemplate,
+      CoinCampaignTemplate,
       VoucherGroup,
       Voucher,
       User,
@@ -33,6 +40,7 @@ import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/
     CampaignProfile,
     NewUserCampaignStrategy,
     UserBirthdayCampaignStrategy,
+    GiftBirthdayCampaignStrategy,
     CampaignListener,
     CampaignScheduler,
   ],

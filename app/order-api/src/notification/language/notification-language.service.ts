@@ -7,11 +7,23 @@ export class NotificationLanguageService {
     vi: {
       [NotificationMessageCode.VOUCHER_BIRTHDAY_RECEIVED]: {
         title: 'Chúc mừng sinh nhật!',
-        body: 'Bạn vừa nhận được voucher {{voucherTitle}} (mã: {{voucherCode}}). Chúc bạn có một ngày sinh nhật vui vẻ!',
+        body: 'Bạn vừa nhận được voucher sinh nhật. Chúc bạn có một ngày sinh nhật vui vẻ!',
       },
       [NotificationMessageCode.VOUCHER_NEW_USER_RECEIVED]: {
         title: 'Chào mừng bạn!',
         body: 'Bạn vừa nhận được voucher {{voucherTitle}} (mã: {{voucherCode}}) dành cho thành viên mới. Chúc bạn mua sắm vui vẻ!',
+      },
+      [NotificationMessageCode.GIFT_BIRTHDAY_RECEIVED]: {
+        title: 'Chúc mừng sinh nhật!',
+        body: 'Bạn vừa nhận được quà sinh nhật {{giftTitle}}. Chúc bạn có một ngày sinh nhật vui vẻ!',
+      },
+      [NotificationMessageCode.COIN_NEW_USER_RECEIVED]: {
+        title: 'Chào mừng bạn!',
+        body: 'Bạn vừa nhận được {{points}} xu dành cho thành viên mới. Chúc bạn mua sắm vui vẻ!',
+      },
+      [NotificationMessageCode.COIN_CAMPAIGN_BUDGET_EXHAUSTED]: {
+        title: 'Chiến dịch tặng xu đã hết ngân sách',
+        body: 'Chiến dịch {{campaignName}} không còn đủ xu để tặng thành viên mới (còn {{remainingCoin}} xu, cần {{coinPerUser}} xu mỗi người). Chiến dịch đã được đóng.',
       },
       [NotificationMessageCode.ORDER_NEEDS_PROCESSED]: {
         title: 'Đơn hàng cần xử lý',
@@ -49,11 +61,23 @@ export class NotificationLanguageService {
     en: {
       [NotificationMessageCode.VOUCHER_BIRTHDAY_RECEIVED]: {
         title: 'Happy Birthday!',
-        body: 'You have received a voucher {{voucherTitle}} (code: {{voucherCode}}). Wishing you a wonderful birthday!',
+        body: 'You have received a birthday voucher. Wishing you a wonderful birthday!',
       },
       [NotificationMessageCode.VOUCHER_NEW_USER_RECEIVED]: {
         title: 'Welcome!',
         body: 'You have received a new member voucher {{voucherTitle}} (code: {{voucherCode}}). Happy shopping!',
+      },
+      [NotificationMessageCode.GIFT_BIRTHDAY_RECEIVED]: {
+        title: 'Happy Birthday!',
+        body: 'You have received a birthday gift {{giftTitle}}. Wishing you a wonderful birthday!',
+      },
+      [NotificationMessageCode.COIN_NEW_USER_RECEIVED]: {
+        title: 'Welcome!',
+        body: 'You have received {{points}} coins as a new member gift. Happy shopping!',
+      },
+      [NotificationMessageCode.COIN_CAMPAIGN_BUDGET_EXHAUSTED]: {
+        title: 'Coin campaign budget exhausted',
+        body: 'Campaign {{campaignName}} no longer has enough coins for new members ({{remainingCoin}} coins left, {{coinPerUser}} needed per user). The campaign has been closed.',
       },
       [NotificationMessageCode.ORDER_NEEDS_PROCESSED]: {
         title: 'Order needs processed',

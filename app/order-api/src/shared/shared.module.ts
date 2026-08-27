@@ -21,6 +21,7 @@ import { GiftCard } from 'src/gift-card-modules/gift-card/entities/gift-card.ent
 import { SharedExportFileService } from './services/shared-export-file.service';
 import { SharedCoinPolicyService } from './services/shared-coin-policy.service';
 import { CoinPolicy } from 'src/gift-card-modules/coin-policy/entities/coin-policy.entity';
+import { Campaign } from 'src/campaign/entity/campaign.entity';
 import { SharedRedisModule } from './redis/shared-redis.module';
 
 @Module({
@@ -44,20 +45,21 @@ import { SharedRedisModule } from './redis/shared-redis.module';
       ACBConnectorConfig,
       Balance,
       GiftCard,
-      CoinPolicy
+      CoinPolicy,
+      Campaign,
     ]),
   ],
   providers: [
     SharedBalanceService,
     SharedPointTransactionService,
     SharedExportFileService,
-    SharedCoinPolicyService
+    SharedCoinPolicyService,
   ],
   exports: [
     SharedBalanceService,
     SharedPointTransactionService,
     SharedExportFileService,
-    SharedCoinPolicyService
+    SharedCoinPolicyService,
   ],
 })
-export class SharedModule { }
+export class SharedModule {}

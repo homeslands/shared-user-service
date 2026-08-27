@@ -7,6 +7,7 @@ export enum PointTransactionObjectTypeEnum {
   ORDER = 'order',
   GIFT_CARD = 'gift-card',
   CARD_ORDER = 'card-order',
+  CAMPAIGN = 'campaign',
 }
 
 export enum PointTransactionGroupBy {

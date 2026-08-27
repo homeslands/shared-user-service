@@ -75,6 +75,55 @@ export class MailService {
     this.logger.log(`Email is sending to ${email}`, context);
   }
 
+  async sendBirthdayGreeting(
+    user: {
+      slug?: string;
+      email?: string;
+      firstName?: string;
+      lastName?: string;
+    },
+    vouchers: {
+      code: string;
+      title: string;
+      value: number;
+      valueType: string;
+      products: string[];
+    }[] = [],
+    // Reward type of the campaign: 'gift' switches the email to the gift
+    // (cake) wording; anything else keeps the voucher content.
+    rewardType?: string,
+  ) {
+    const context = `${MailService.name}.${this.sendBirthdayGreeting.name}`;
+    await this.mailProducer.sendMail({
+      to: user.email,
+      subject: '[Trend Coffee] Chúc mừng sinh nhật!',
+      template: resolve('public/templates/mail/birthday'),
+      context: {
+        name: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
+        id: user.slug ?? '',
+        vouchers,
+        rewardType,
+      },
+      // Only gift campaigns show the birthday image (referenced via cid in the
+      // template).
+      ...(rewardType === 'gift'
+        ? {
+            attachments: [
+              {
+                filename: 'birthday-gift.png',
+                path: resolve('public/images/birthday-gift.png'),
+                cid: 'birthday-gift',
+              },
+            ],
+          }
+        : {}),
+    });
+    this.logger.log(
+      `Birthday email is sending to ${user.email} (${vouchers.length} voucher(s))`,
+      context,
+    );
+  }
+
   async sendInvoiceWhenOrderPaid(user: User, invoice: Buffer) {
     const context = `${MailService.name}.${this.sendInvoiceWhenOrderPaid.name}`;
 

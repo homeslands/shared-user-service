@@ -51,6 +51,7 @@ import { ExcelUtil } from 'src/shared/utils/excel.util';
 import moment from 'moment';
 import { ExportFilename } from 'src/shared/constants/export-filename.constant';
 import { CurrencyUtil } from 'src/shared/utils/currency.util';
+import { Campaign } from 'src/campaign/entity/campaign.entity';
 
 @Injectable()
 export class PointTransactionService {
@@ -65,6 +66,8 @@ export class PointTransactionService {
     private gcRepository: Repository<GiftCard>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(Campaign)
+    private campaignRepository: Repository<Campaign>,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectMapper()
@@ -292,10 +295,11 @@ export class PointTransactionService {
         PointTransactionValidation.POINT_TRANSACTION_NOT_FOUND,
       );
 
-    const ref: Order | GiftCard | CardOrder = await this.getObjectRef({
-      objectType: pt.objectType,
-      objectSlug: pt.objectSlug,
-    });
+    const ref: Order | GiftCard | CardOrder | Campaign =
+      await this.getObjectRef({
+        objectType: pt.objectType,
+        objectSlug: pt.objectSlug,
+      });
 
     const logoUri = fileToBase64DataUri('public/images/logo.png', 'image/png');
 
@@ -313,7 +317,7 @@ export class PointTransactionService {
   }
 
   async getObjectRef(payload: { objectType: string; objectSlug: string }) {
-    let objectRef: Order | GiftCard | CardOrder = null;
+    let objectRef: Order | GiftCard | CardOrder | Campaign = null;
 
     switch (payload.objectType) {
       case PointTransactionObjectTypeEnum.ORDER:
@@ -331,6 +335,11 @@ export class PointTransactionService {
         objectRef = await this.coRepository.findOne({
           where: { slug: payload.objectSlug },
           relations: ['payment'],
+        });
+        break;
+      case PointTransactionObjectTypeEnum.CAMPAIGN:
+        objectRef = await this.campaignRepository.findOne({
+          where: { slug: payload.objectSlug },
         });
         break;
       default:

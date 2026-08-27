@@ -2,7 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
-import { FindManyOptions, In, LessThanOrEqual, Repository } from 'typeorm';
+import {
+  FindManyOptions,
+  In,
+  IsNull,
+  LessThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { VoucherGroup } from 'src/voucher-group/voucher-group.entity';
 import { Product } from 'src/product/product.entity';
@@ -11,8 +17,16 @@ import { AppPaginatedResponseDto } from 'src/app/app.dto';
 import { CampaignRecipient } from './entity/campaign-recipient.entity';
 import { Campaign } from './entity/campaign.entity';
 import { VoucherCampaignTemplate } from './entity/voucher-campaign-template.entity';
+import { GiftCampaignTemplate } from './entity/gift-campaign-template.entity';
+import { CoinCampaignTemplate } from './entity/coin-campaign-template.entity';
 import { CampaignException } from './campaign.exception';
-import { CampaignType, CampaignStatus } from './campaign.constants';
+import {
+  CampaignType,
+  CampaignRewardType,
+  CampaignStatus,
+  AvailableBirthdayCampaign,
+  BirthdayVoucherInfo,
+} from './campaign.constants';
 import { CampaignValidation } from './campaign.validation';
 import {
   CampaignKeyResponseDto,
@@ -24,6 +38,7 @@ import {
 import { ICampaignStrategy } from './strategy/campaign.strategy';
 import { NewUserCampaignStrategy } from './strategy/new-user-campaign/new-user-campaign.strategy';
 import { UserBirthdayCampaignStrategy } from './strategy/user-birthday-campaign/user-birthday-campaign.strategy';
+import { GiftBirthdayCampaignStrategy } from './strategy/gift-birthday-campaign/gift-birthday-campaign.strategy';
 import { RoleEnum } from 'src/role/role.enum';
 
 @Injectable()
@@ -39,10 +54,13 @@ export class CampaignService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(VoucherCampaignTemplate)
     private readonly voucherCampaignTemplateRepository: Repository<VoucherCampaignTemplate>,
+    @InjectRepository(CoinCampaignTemplate)
+    private readonly coinCampaignTemplateRepository: Repository<CoinCampaignTemplate>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly newUserCampaignStrategy: NewUserCampaignStrategy,
     private readonly userBirthdayCampaignStrategy: UserBirthdayCampaignStrategy,
+    private readonly giftBirthdayCampaignStrategy: GiftBirthdayCampaignStrategy,
     @InjectMapper() private readonly mapper: Mapper,
     @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger,
   ) {}
@@ -56,13 +74,36 @@ export class CampaignService {
   async create(dto: CreateCampaignRequestDto): Promise<CampaignResponseDto> {
     const context = `${CampaignService.name}.${this.create.name}`;
 
-    const voucherGroup = await this.voucherGroupRepository.findOne({
-      where: { slug: dto.voucherGroupSlug },
-    });
-    if (!voucherGroup) {
-      throw new CampaignException(
-        CampaignValidation.CAMPAIGN_VOUCHER_GROUP_NOT_FOUND,
-      );
+    this.validateCampaignTemplate(dto);
+
+    // Only voucher campaigns issue vouchers into a group; gift and coin
+    // campaigns don't use one, so skip the lookup and leave
+    // campaign.voucherGroup null for them.
+    let voucherGroup: VoucherGroup | null = null;
+    if (dto.campaignType === CampaignRewardType.VOUCHER) {
+      // A voucher group is mandatory here; guard the empty slug too, otherwise
+      // findOne({ slug: undefined }) would silently match an arbitrary group.
+      if (!dto.voucherGroupSlug) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_VOUCHER_GROUP_REQUIRED,
+        );
+      }
+      voucherGroup = await this.voucherGroupRepository.findOne({
+        where: { slug: dto.voucherGroupSlug },
+      });
+      if (!voucherGroup) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_VOUCHER_GROUP_NOT_FOUND,
+        );
+      }
+    }
+
+    // COIN campaigns are only valid for NEW_USER type
+    if (
+      dto.campaignType === CampaignRewardType.COIN &&
+      dto.type !== CampaignType.NEW_USER
+    ) {
+      throw new CampaignException(CampaignValidation.UNSUPPORTED_CAMPAIGN_TYPE);
     }
 
     const now = new Date();
@@ -79,8 +120,24 @@ export class CampaignService {
       );
     }
 
+    if (dto.type === CampaignType.USER_BIRTHDAY) {
+      await this.assertNoOverlappingBirthdayCampaign(
+        dto.startDate,
+        dto.endDate,
+      );
+    }
+
+    // Only one new-user campaign may run in any time period: reject the
+    // create when it overlaps a non-closed new-user campaign — the admin has
+    // to close the opening campaign before creating a new one.
+    if (dto.type === CampaignType.NEW_USER) {
+      await this.assertNoOverlappingNewUserCampaign(dto.startDate, dto.endDate);
+    }
+
     const campaign = this.mapper.map(dto, CreateCampaignRequestDto, Campaign);
-    campaign.voucherGroup = voucherGroup;
+    if (voucherGroup) {
+      campaign.voucherGroup = voucherGroup;
+    }
     campaign.status = CampaignStatus.SCHEDULED;
 
     if (dto.voucherCampaignTemplate) {
@@ -102,12 +159,43 @@ export class CampaignService {
       campaign.voucherCampaignTemplate = template;
     }
 
+    if (dto.giftCampaignTemplate) {
+      if (dto.endDate) {
+        dto.giftCampaignTemplate.duration = null;
+      } else if (!dto.giftCampaignTemplate.duration) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_DURATION_REQUIRED_WITHOUT_END_DATE,
+        );
+      }
+
+      const template = new GiftCampaignTemplate();
+      Object.assign(template, dto.giftCampaignTemplate);
+      campaign.giftCampaignTemplate = template;
+    }
+
+    if (dto.coinCampaignTemplate) {
+      this.assertCoinLimitCoversCoinPerUser(
+        dto.coinCampaignTemplate.coinPerUser,
+        dto.coinCampaignTemplate.totalCoinLimit,
+      );
+      const template = new CoinCampaignTemplate();
+      Object.assign(template, dto.coinCampaignTemplate);
+      // The remaining pool starts at the full budget; null = unlimited.
+      template.remainingCoin = dto.coinCampaignTemplate.totalCoinLimit ?? null;
+      campaign.coinCampaignTemplate = template;
+    }
+
     const saved = await this.campaignRepository.save(campaign);
     this.logger.log(`Campaign created: ${saved.slug}`, context);
 
     const result = await this.campaignRepository.findOne({
       where: { id: saved.id },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
     });
     return this.mapper.map(result, Campaign, CampaignResponseDto);
   }
@@ -120,7 +208,12 @@ export class CampaignService {
         ...(query.type ? { type: query.type } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
       order: { createdAt: 'DESC' },
     };
 
@@ -149,7 +242,12 @@ export class CampaignService {
   async findOne(slug: string): Promise<CampaignResponseDto> {
     const campaign = await this.campaignRepository.findOne({
       where: { slug },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
     });
     if (!campaign) {
       throw new CampaignException(CampaignValidation.CAMPAIGN_NOT_FOUND);
@@ -165,7 +263,12 @@ export class CampaignService {
 
     const campaign = await this.campaignRepository.findOne({
       where: { slug },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
     });
     if (!campaign) {
       throw new CampaignException(CampaignValidation.CAMPAIGN_NOT_FOUND);
@@ -179,6 +282,17 @@ export class CampaignService {
     if (effectiveEndDate && effectiveEndDate <= effectiveStartDate) {
       throw new CampaignException(
         CampaignValidation.CAMPAIGN_INVALID_DATE_RANGE,
+      );
+    }
+
+    if (
+      campaign.type === CampaignType.USER_BIRTHDAY &&
+      (dto.startDate !== undefined || dto.endDate !== undefined)
+    ) {
+      await this.assertNoOverlappingBirthdayCampaign(
+        effectiveStartDate,
+        effectiveEndDate,
+        campaign.id,
       );
     }
 
@@ -245,6 +359,38 @@ export class CampaignService {
       }
     }
 
+    if (dto.coinCampaignTemplate !== undefined) {
+      this.assertCoinLimitCoversCoinPerUser(
+        dto.coinCampaignTemplate.coinPerUser ??
+          campaign.coinCampaignTemplate?.coinPerUser,
+        dto.coinCampaignTemplate.totalCoinLimit !== undefined
+          ? dto.coinCampaignTemplate.totalCoinLimit
+          : campaign.coinCampaignTemplate?.totalCoinLimit,
+      );
+      if (campaign.coinCampaignTemplate) {
+        const template = campaign.coinCampaignTemplate;
+        // A new budget keeps what was already spent: remaining = new limit -
+        // consumed so far. Clamped at 0 — the strategy stops granting there.
+        if (dto.coinCampaignTemplate.totalCoinLimit !== undefined) {
+          const consumed =
+            template.totalCoinLimit != null
+              ? template.totalCoinLimit - (template.remainingCoin ?? 0)
+              : 0;
+          template.remainingCoin = Math.max(
+            dto.coinCampaignTemplate.totalCoinLimit - consumed,
+            0,
+          );
+        }
+        Object.assign(template, dto.coinCampaignTemplate);
+      } else {
+        const template = new CoinCampaignTemplate();
+        Object.assign(template, dto.coinCampaignTemplate);
+        template.remainingCoin =
+          dto.coinCampaignTemplate.totalCoinLimit ?? null;
+        campaign.coinCampaignTemplate = template;
+      }
+    }
+
     if (dto.name !== undefined) campaign.name = dto.name;
     if (dto.status !== undefined) campaign.status = dto.status;
     if (dto.recipientLimit !== undefined)
@@ -252,12 +398,43 @@ export class CampaignService {
     if (dto.startDate !== undefined) campaign.startDate = dto.startDate;
     if (dto.endDate !== undefined) campaign.endDate = dto.endDate;
 
+    // A coin campaign whose remaining pool can no longer cover one grant must
+    // not run: reject (re)opening it — the admin has to raise totalCoinLimit
+    // first, which refills remainingCoin above — and close an open campaign
+    // that an update (e.g. raising coinPerUser) left underfunded.
+    const coinTemplate = campaign.coinCampaignTemplate;
+    if (
+      coinTemplate?.remainingCoin != null &&
+      Number(coinTemplate.remainingCoin) < Number(coinTemplate.coinPerUser)
+    ) {
+      if (
+        dto.status === CampaignStatus.OPENING ||
+        dto.status === CampaignStatus.SCHEDULED
+      ) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_COIN_BUDGET_EXHAUSTED,
+        );
+      }
+      if (campaign.status === CampaignStatus.OPENING) {
+        campaign.status = CampaignStatus.CLOSED;
+        this.logger.warn(
+          `Campaign ${campaign.slug} closed: remaining coin ${coinTemplate.remainingCoin} cannot cover coinPerUser ${coinTemplate.coinPerUser}`,
+          context,
+        );
+      }
+    }
+
     const saved = await this.campaignRepository.save(campaign);
     this.logger.log(`Campaign updated: ${saved.slug}`, context);
 
     const result = await this.campaignRepository.findOne({
       where: { id: saved.id },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
     });
     return this.mapper.map(result, Campaign, CampaignResponseDto);
   }
@@ -267,7 +444,7 @@ export class CampaignService {
 
     const campaign = await this.campaignRepository.findOne({
       where: { slug },
-      relations: { voucherCampaignTemplate: true },
+      relations: { voucherCampaignTemplate: true, coinCampaignTemplate: true },
     });
     if (!campaign) {
       throw new CampaignException(CampaignValidation.CAMPAIGN_NOT_FOUND);
@@ -280,14 +457,164 @@ export class CampaignService {
       throw new CampaignException(CampaignValidation.CAMPAIGN_HAS_VOUCHERS);
     }
 
+    // campaign_tbl carries the FK columns to the template tables, so the
+    // campaign row must go first — deleting a template while the campaign
+    // still references it violates the constraint (surfaced as a 500).
+    await this.campaignRepository.delete(campaign.id);
+
     if (campaign.voucherCampaignTemplate) {
       await this.voucherCampaignTemplateRepository.delete(
         campaign.voucherCampaignTemplate.id,
       );
     }
 
-    await this.campaignRepository.delete(campaign.id);
+    if (campaign.coinCampaignTemplate) {
+      await this.coinCampaignTemplateRepository.delete(
+        campaign.coinCampaignTemplate.id,
+      );
+    }
+
     this.logger.log(`Campaign deleted: ${slug}`, context);
+  }
+
+  /**
+   * Whether at least one campaign of the given type is currently available,
+   * i.e. status OPENING, already started, and not yet ended.
+   */
+  async isCampaignAvailable(campaignType: CampaignType): Promise<boolean> {
+    const context = `${CampaignService.name}.${this.isCampaignAvailable.name}`;
+    const now = new Date();
+
+    const campaigns = await this.campaignRepository.find({
+      where: {
+        type: campaignType,
+        status: CampaignStatus.OPENING,
+        startDate: LessThanOrEqual(now),
+      },
+      select: { id: true, endDate: true },
+    });
+
+    const available = campaigns.some((c) => !c.endDate || c.endDate >= now);
+    this.logger.log(
+      `Campaign type ${campaignType} available: ${available}`,
+      context,
+    );
+    return available;
+  }
+
+  /**
+   * Currently-available USER_BIRTHDAY campaigns, each with its reward type
+   * (derived from which template it carries). Used by the greeting sender to
+   * route channels and to look up the campaign's vouchers.
+   */
+  async getAvailableBirthdayCampaigns(): Promise<AvailableBirthdayCampaign[]> {
+    const context = `${CampaignService.name}.${this.getAvailableBirthdayCampaigns.name}`;
+    const now = new Date();
+
+    const campaigns = await this.campaignRepository.find({
+      where: {
+        type: CampaignType.USER_BIRTHDAY,
+        status: CampaignStatus.OPENING,
+        startDate: LessThanOrEqual(now),
+      },
+      relations: {
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+      },
+    });
+
+    const result: AvailableBirthdayCampaign[] = [];
+    for (const campaign of campaigns) {
+      if (campaign.endDate && campaign.endDate < now) continue;
+      const rewardType = campaign.giftCampaignTemplate
+        ? CampaignRewardType.GIFT
+        : campaign.voucherCampaignTemplate
+          ? CampaignRewardType.VOUCHER
+          : null;
+      if (!rewardType) continue;
+      result.push({ id: campaign.id, slug: campaign.slug, rewardType });
+    }
+
+    this.logger.log(
+      `Available birthday campaigns: [${result.map((c) => `${c.slug}:${c.rewardType}`).join(', ')}]`,
+      context,
+    );
+    return result;
+  }
+
+  /**
+   * The birthday CampaignRecipient for this user/campaign in a given year, or
+   * null. Its presence means the user is a valid birthday recipient that year
+   * (Flow 1 granted the reward) — used to gate the automatic greeting sender.
+   */
+  async findBirthdayRecipient(
+    campaignId: string,
+    userId: string,
+    year: number,
+  ): Promise<CampaignRecipient | null> {
+    return this.recipientRepository.findOne({
+      where: {
+        campaign: { id: campaignId },
+        user: { id: userId },
+        year,
+      },
+    });
+  }
+
+  /**
+   * Atomically claim the birthday greeting for a recipient: set greetedAt only
+   * when it is still null. Returns true if this caller won the claim (should
+   * send), false if it was already greeted. Guards against duplicate greetings
+   * under races, so a user is greeted at most once per year.
+   */
+  async claimBirthdayGreeting(recipientId: string): Promise<boolean> {
+    const result = await this.recipientRepository.update(
+      { id: recipientId, greetedAt: IsNull() },
+      { greetedAt: new Date() },
+    );
+    return result.affected === 1;
+  }
+
+  /**
+   * Release a previously claimed greeting (set greetedAt back to null) so it can
+   * be retried later, e.g. when the provider did not accept the message.
+   */
+  async releaseBirthdayGreeting(recipientId: string): Promise<void> {
+    await this.recipientRepository.update(
+      { id: recipientId },
+      { greetedAt: null },
+    );
+  }
+
+  /**
+   * Vouchers a user received from a given campaign in a given year (via the
+   * campaign recipients). Used to list the campaign's vouchers in the greeting.
+   */
+  async getUserBirthdayVouchers(
+    campaignId: string,
+    userId: string,
+    year: number,
+  ): Promise<BirthdayVoucherInfo[]> {
+    const recipients = await this.recipientRepository.find({
+      where: {
+        campaign: { id: campaignId },
+        user: { id: userId },
+        year,
+      },
+      relations: { voucher: { voucherProducts: { product: true } } },
+    });
+
+    return recipients
+      .filter((r) => r.voucher)
+      .map((r) => ({
+        code: r.voucher.code,
+        title: r.voucher.title,
+        value: r.voucher.value,
+        valueType: r.voucher.valueType,
+        products: (r.voucher.voucherProducts ?? [])
+          .map((vp) => vp.product?.name)
+          .filter((name): name is string => !!name),
+      }));
   }
 
   async triggerForUser(user: User, campaignType: CampaignType): Promise<void> {
@@ -318,7 +645,12 @@ export class CampaignService {
         status: CampaignStatus.OPENING,
         startDate: LessThanOrEqual(now),
       },
-      relations: { voucherGroup: true, voucherCampaignTemplate: true },
+      relations: {
+        voucherGroup: true,
+        voucherCampaignTemplate: true,
+        giftCampaignTemplate: true,
+        coinCampaignTemplate: true,
+      },
     });
 
     const activeCampaigns = campaigns.filter(
@@ -341,6 +673,94 @@ export class CampaignService {
     }
   }
 
+  /**
+   * Enforce at most one user-birthday campaign running in any time period:
+   * the [startDate, endDate] window (endDate null = open-ended) must not overlap
+   * another non-closed user-birthday campaign. `excludeId` skips the campaign
+   * being updated. Two windows overlap when aStart <= bEnd && bStart <= aEnd.
+   */
+  private async assertNoOverlappingBirthdayCampaign(
+    startDate: Date,
+    endDate: Date | null | undefined,
+    excludeId?: string,
+  ): Promise<void> {
+    const others = await this.campaignRepository.find({
+      where: {
+        type: CampaignType.USER_BIRTHDAY,
+        status: In([CampaignStatus.SCHEDULED, CampaignStatus.OPENING]),
+      },
+    });
+
+    const aStart = startDate.getTime();
+    const aEnd = endDate ? endDate.getTime() : Number.POSITIVE_INFINITY;
+
+    for (const other of others) {
+      if (excludeId && other.id === excludeId) continue;
+      const bStart = other.startDate.getTime();
+      const bEnd = other.endDate
+        ? other.endDate.getTime()
+        : Number.POSITIVE_INFINITY;
+      if (aStart <= bEnd && bStart <= aEnd) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_BIRTHDAY_PERIOD_OVERLAP,
+        );
+      }
+    }
+  }
+
+  /**
+   * Enforce at most one new-user campaign running in any time period: the
+   * [startDate, endDate] window (endDate null = open-ended) must not overlap
+   * another non-closed new-user campaign — the request is rejected and the
+   * admin must close the opening campaign before creating a new one. Two
+   * windows overlap when aStart <= bEnd && bStart <= aEnd.
+   */
+  private async assertNoOverlappingNewUserCampaign(
+    startDate: Date,
+    endDate: Date | null | undefined,
+  ): Promise<void> {
+    const others = await this.campaignRepository.find({
+      where: {
+        type: CampaignType.NEW_USER,
+        status: In([CampaignStatus.SCHEDULED, CampaignStatus.OPENING]),
+      },
+    });
+
+    const aStart = startDate.getTime();
+    const aEnd = endDate ? endDate.getTime() : Number.POSITIVE_INFINITY;
+
+    for (const other of others) {
+      const bStart = other.startDate.getTime();
+      const bEnd = other.endDate
+        ? other.endDate.getTime()
+        : Number.POSITIVE_INFINITY;
+      if (aStart <= bEnd && bStart <= aEnd) {
+        throw new CampaignException(
+          CampaignValidation.CAMPAIGN_NEW_USER_PERIOD_OVERLAP,
+        );
+      }
+    }
+  }
+
+  /**
+   * A bounded coin budget must cover at least one grant, otherwise the campaign
+   * could never reward anyone. Null/undefined limit = unlimited, always fine.
+   */
+  private assertCoinLimitCoversCoinPerUser(
+    coinPerUser: number | undefined,
+    totalCoinLimit: number | null | undefined,
+  ): void {
+    if (
+      coinPerUser != null &&
+      totalCoinLimit != null &&
+      totalCoinLimit < coinPerUser
+    ) {
+      throw new CampaignException(
+        CampaignValidation.CAMPAIGN_COIN_LIMIT_LESS_THAN_COIN_PER_USER,
+      );
+    }
+  }
+
   private async checkEligibility(
     campaign: Campaign,
     user: User,
@@ -348,9 +768,12 @@ export class CampaignService {
     const currentYear = new Date().getFullYear();
 
     if (campaign.type === CampaignType.USER_BIRTHDAY) {
+      // One birthday reward per user per year across ALL user-birthday campaigns
+      // (voucher + gift), not per campaign — so a user with both a voucher and a
+      // gift birthday campaign open receives only the first one this year.
       const count = await this.recipientRepository.count({
         where: {
-          campaign: { id: campaign.id },
+          campaign: { type: CampaignType.USER_BIRTHDAY },
           user: { id: user.id },
           year: currentYear,
         },
@@ -388,12 +811,68 @@ export class CampaignService {
     }
   }
 
+  private validateCampaignTemplate(dto: CreateCampaignRequestDto): void {
+    const hasVoucher = dto.voucherCampaignTemplate != null;
+    const hasGift = dto.giftCampaignTemplate != null;
+    const hasCoin = dto.coinCampaignTemplate != null;
+
+    switch (dto.campaignType) {
+      case CampaignRewardType.VOUCHER:
+        if (!hasVoucher) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_REQUIRED_FOR_TYPE,
+          );
+        }
+        if (hasGift || hasCoin) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_TYPE_MISMATCH,
+          );
+        }
+        break;
+      case CampaignRewardType.GIFT:
+        if (!hasGift) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_REQUIRED_FOR_TYPE,
+          );
+        }
+        if (hasVoucher || hasCoin) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_TYPE_MISMATCH,
+          );
+        }
+        break;
+      case CampaignRewardType.COIN:
+        if (!hasCoin) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_REQUIRED_FOR_TYPE,
+          );
+        }
+        if (hasVoucher || hasGift) {
+          throw new CampaignException(
+            CampaignValidation.CAMPAIGN_TEMPLATE_TYPE_MISMATCH,
+          );
+        }
+        break;
+      default:
+        throw new CampaignException(
+          CampaignValidation.UNSUPPORTED_CAMPAIGN_TYPE,
+        );
+    }
+  }
+
   private selectStrategy(campaign: Campaign): ICampaignStrategy {
     switch (campaign.type) {
       case CampaignType.NEW_USER:
+        // Handles both voucher and coin rewards; the strategy branches on which
+        // template the campaign carries.
         return this.newUserCampaignStrategy;
       case CampaignType.USER_BIRTHDAY:
-        return this.userBirthdayCampaignStrategy;
+        // Reward type is implied by which template is populated: a gift campaign
+        // (giftCampaignTemplate set) records the recipient only; otherwise the
+        // existing voucher strategy runs unchanged.
+        return campaign.giftCampaignTemplate
+          ? this.giftBirthdayCampaignStrategy
+          : this.userBirthdayCampaignStrategy;
       default:
         throw new CampaignException(
           CampaignValidation.UNSUPPORTED_CAMPAIGN_TYPE,

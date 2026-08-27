@@ -55,6 +55,7 @@ import { CardOrderRevenueController } from './analysis/card-order-revenue/card-o
 import { CardOrderRevenueService } from './analysis/card-order-revenue/card-order-revenue.service';
 import { CardOrderRevenue } from './analysis/card-order-revenue/entities/card-order-revenue.entity';
 import { CardOrderRevenueProfile } from './analysis/card-order-revenue/card-order-revenue.mapper';
+import { Campaign } from 'src/campaign/entity/campaign.entity';
 
 const controllers = [
   CardController,
@@ -65,7 +66,7 @@ const controllers = [
   PointTransactionController,
   FeatureFlagController,
   CoinPolicyController,
-  CardOrderRevenueController
+  CardOrderRevenueController,
 ];
 
 const providers = [
@@ -82,7 +83,7 @@ const providers = [
   ACBConnectorClient,
   CashStrategy,
   PaymentUtils,
-  CashStrategy
+  CashStrategy,
 ];
 
 const mappers = [
@@ -94,7 +95,7 @@ const mappers = [
   PointTransactionProfile,
   FeatureFlagProfile,
   CoinPolicyProfile,
-  CardOrderRevenueProfile
+  CardOrderRevenueProfile,
 ];
 
 const modules = [
@@ -112,7 +113,8 @@ const modules = [
     FeatureFlag,
     FeatureGroup,
     CoinPolicy,
-    CardOrderRevenue
+    CardOrderRevenue,
+    Campaign,
   ]),
   FileModule,
   DbModule,
@@ -130,7 +132,7 @@ const exportServices = [
   RecipientService,
   PointTransactionService,
   FeatureFlagService,
-  CoinPolicyService
+  CoinPolicyService,
 ];
 
 const listeners = [CardOrderListener];
@@ -153,4 +155,4 @@ const schedulers = [GiftCardScheduler, BalanceScheduler];
   ],
   exports: [...exportServices, ...exportMappers],
 })
-export class GiftCardModule { }
+export class GiftCardModule {}
