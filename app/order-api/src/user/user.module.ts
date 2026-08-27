@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserController } from './user.controller';
+import { UserInternalController } from './internal/user-internal.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './user.entity';
 import { UserProfile } from './user.mapper';
@@ -43,7 +44,7 @@ import { CampaignModule } from 'src/campaign/campaign.module';
       name: QueueRegisterKey.DISTRIBUTE_LOCK_JOB,
     }),
   ],
-  controllers: [UserController],
+  controllers: [UserController, UserInternalController],
   providers: [
     UserService,
     UserProfile,
