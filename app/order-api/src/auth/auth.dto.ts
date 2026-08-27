@@ -371,6 +371,5 @@ export class CompleteRegisterRequestDto {
 export class AuthJwtPayload {
   sub: string;
   jti: string;
-  scope?: string;
   exp?: number;
 }
