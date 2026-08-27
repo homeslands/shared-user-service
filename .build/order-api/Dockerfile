@@ -33,7 +33,7 @@ RUN npm run build
 
 
 # Expose the application port
-EXPOSE 8080
+EXPOSE 8086
 
 # Start the application
 CMD ["npm", "start"]
