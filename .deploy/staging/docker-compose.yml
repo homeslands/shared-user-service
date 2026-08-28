@@ -96,6 +96,16 @@ services:
       QR_ACTIVE_TTL: ${QR_ACTIVE_TTL}
       QR_IDEMPOTENT_TTL: ${QR_IDEMPOTENT_TTL}
 
+      # HTTP
+      TREND_API_URL: ${TREND_API_URL}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+
+      # RabbitMQ
+      RABBITMQ_URL: ${RABBITMQ_URL}
+
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+
       TZ: Asia/Ho_Chi_Minh
 
     deploy:
