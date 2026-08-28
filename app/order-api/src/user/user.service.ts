@@ -36,6 +36,7 @@ import {
   GetUserStatisticsQueryRequestDto,
   UpdateUserLanguageRequestDto,
   UpdateUserRequestDto,
+  UpdateUserRoleRequestDto,
   UserResponseDto,
   UserStatisticItemDto,
   UserStatisticsResponseDto,
@@ -126,131 +127,6 @@ export class UserService {
     }
 
     return this.mapper.map(user, User, UserResponseDto);
-  }
-
-  // Dung cho InternalUserController - tra ve id that cua shared-user de cac
-  // service khac (trend) map user cuc bo cua ho sang danh tinh nay. Co kem
-  // `isActive` vi khoa/mo khoa tai khoan gio quy het ve shared-user (xem
-  // architect-http.md muc 1.1) - trend khong con giu ban isActive cua rieng
-  // no, phai hoi lai day moi lan can biet.
-  // Field identity tra ve cho InternalUserController - de service khac
-  // (trend) ghep vao response cua no khi can ca identity (shared-user) lan
-  // role/branch (trend) trong cung 1 endpoint (xem architect-http.md muc
-  // 1.1 quy tac 4). Co tinh KHONG tra `role`/`branch` - shared-user khong
-  // co khai niem role/branch that, chi trend moi la nguon that.
-  private toInternalLookupResponse(user: User) {
-    return {
-      id: user.id,
-      phonenumber: user.phonenumber,
-      slug: user.slug,
-      isActive: user.isActive,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      dob: user.dob,
-      email: user.email,
-      address: user.address,
-      image: user.image,
-      isVerifiedEmail: user.isVerifiedEmail,
-      isVerifiedPhonenumber: user.isVerifiedPhonenumber,
-      // Ngay dang ky that - nguon duy nhat cho createdAt cua row lazy ben
-      // service tieu thu (khong dung gio tao row cuc bo/gio job chay), xem
-      // issuses/sync-user-data-with-role.md muc 6.3.
-      createdAt: user.createdAt,
-    };
-  }
-
-  async findByPhonenumber(phonenumber: string) {
-    const user = await this.userRepository.findOne({ where: { phonenumber } });
-    if (!user) return null;
-    return this.toInternalLookupResponse(user);
-  }
-
-  // Dung cho InternalUserController - JwtStrategy cua service khac (trend)
-  // chi co payload.sub (id that cua shared-user, khong co phonenumber trong
-  // token) nen can tra cuu nguoc lai theo id de tu tao row cuc bo lan dau
-  // user do goi sang (xem issuses/sync-user-data-with-role.md), dong thoi la
-  // cho trend hoi trang thai khoa tai khoan moi lan xac thuc.
-  async findById(id: string) {
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) return null;
-    return this.toInternalLookupResponse(user);
-  }
-
-  // Batch cua findById - dung khi trend can ghep identity vao ca 1 trang
-  // danh sach user (GET /user ben trend), tranh goi N+1 lan theo tung dong.
-  async findByIds(ids: string[]) {
-    if (!ids.length) return [];
-    const users = await this.userRepository.find({ where: { id: In(ids) } });
-    return users.map((user) => this.toInternalLookupResponse(user));
-  }
-
-  // Dung cho InternalUserController - job batch cuoi ngay ben service tieu
-  // thu (trend/terminal) tu pull user moi tao trong khoang [createdFrom,
-  // createdTo) de bu cho khoang tre cua lazy load thuan (user dang ky roi
-  // nhung chua tung dang nhap vao service do thi khong co row cuc bo o day).
-  // Xem issuses/sync-user-data-with-role.md muc 6.
-  async findRecentlyCreated(createdFrom: Date, createdTo: Date) {
-    const users = await this.userRepository.find({
-      where: { createdAt: Between(createdFrom, createdTo) },
-      order: { createdAt: 'ASC' },
-    });
-    return users.map((user) => this.toInternalLookupResponse(user));
-  }
-
-  // Dung cho InternalUserController - sua identity ho 1 service khac (vd
-  // trend goi khi admin sua thong tin nhan vien/khach hang qua
-  // PATCH /user/:slug, hoac user tu hoan tat dang ky qua
-  // PATCH /user/:slug/complete-registration). Tra theo `id` (khong phai
-  // slug) vi ben goi chi giu sharedUserId. Chi cho sua field identity - KHONG
-  // dong cham role/branch (khong con thuoc ve shared-user).
-  async updateIdentityById(
-    id: string,
-    data: {
-      phonenumber?: string;
-      firstName?: string;
-      lastName?: string;
-      dob?: string;
-      email?: string;
-      address?: string;
-      image?: string;
-    },
-  ) {
-    const context = `${UserService.name}.${this.updateIdentityById.name}`;
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
-
-    if (data.phonenumber && data.phonenumber !== user.phonenumber) {
-      const existedPhonenumber = await this.userRepository.findOne({
-        where: { phonenumber: data.phonenumber },
-      });
-      if (existedPhonenumber) {
-        this.logger.error(
-          AuthValidation.PHONE_NUMBER_ALREADY_EXISTS.message,
-          null,
-          context,
-        );
-        throw new AuthException(AuthValidation.PHONE_NUMBER_ALREADY_EXISTS);
-      }
-    }
-
-    Object.assign(user, data);
-    if ('dob' in data) {
-      const [day, month] = data.dob ? data.dob.split('/') : [];
-      user.dobDM = day && month ? `${day}${month}` : null;
-    }
-
-    try {
-      const updatedUser = await this.userRepository.save(user);
-      this.logger.log(`User ${user.id} identity updated`, context);
-      return this.toInternalLookupResponse(updatedUser);
-    } catch (error) {
-      this.logger.error(
-        `Error when updating identity: ${error.message}`,
-        error.stack,
-        context,
-      );
-      throw new AuthException(AuthValidation.ERROR_UPDATE_USER);
-    }
   }
 
   async updateUser(slug: string, requestData: UpdateUserRequestDto) {
@@ -522,6 +398,44 @@ export class UserService {
 
     if (createdUser)
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
+
+    return this.mapper.map(user, User, UserResponseDto);
+  }
+
+  async updateUserRole(slug: string, requestData: UpdateUserRoleRequestDto) {
+    const context = `${UserService.name}.${this.updateUserRole.name}`;
+    const role = await this.roleRepository.findOne({
+      where: {
+        slug: requestData.role,
+      },
+    });
+    if (!role) throw new RoleException(RoleValidation.ROLE_NOT_FOUND);
+
+    const user = await this.userRepository.findOne({
+      where: { slug },
+      relations: ['role'],
+    });
+    if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
+
+    if (user.role.name === RoleEnum.Customer) {
+      this.logger.warn(
+        `Can not update customer role to ${role.name} role`,
+        context,
+      );
+      throw new UserException(UserValidation.CANNOT_UPDATE_CUSTOMER_ROLE);
+    }
+
+    try {
+      user.role = role;
+      await this.userRepository.save(user);
+      this.logger.log(`User role has been updated successfully`, context);
+    } catch (error) {
+      this.logger.error(
+        `Error when updating user role: ${error.message}`,
+        error.stack,
+        context,
+      );
+    }
 
     return this.mapper.map(user, User, UserResponseDto);
   }

@@ -437,6 +437,7 @@ describe('AuthService', () => {
 
     const mockAuthJwtPayload: AuthJwtPayload = {
       jti: '',
+      scope: '',
       sub: 'user-id',
     };
 
