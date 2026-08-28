@@ -1,6 +1,10 @@
+import { config as dotenvConfig } from 'dotenv';
+dotenvConfig({ path: '.env' });
+
 export const jwtConstants = {
-  secret:
-    'DO NOT USE THIS VALUE. INSTEAD, CREATE A COMPLEX SECRET AND KEEP IT SAFE OUTSIDE OF THE SOURCE CODE.',
+  algorithm: 'RS256' as const,
+  privateKey: process.env.JWT_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  publicKey: process.env.JWT_PUBLIC_KEY?.replace(/\\n/g, '\n'),
 };
 
 export enum AccountVerificationType {
