@@ -108,6 +108,9 @@ services:
       # RabbitMQ
       RABBITMQ_URL: ${RABBITMQ_URL}
 
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+
       TZ: Asia/Ho_Chi_Minh
 
     # deploy:
