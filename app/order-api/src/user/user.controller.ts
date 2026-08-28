@@ -31,6 +31,7 @@ import {
   GetUserStatisticsQueryRequestDto,
   UpdateUserLanguageRequestDto,
   UpdateUserRequestDto,
+  UpdateUserRoleRequestDto,
   UserResponseDto,
   UserStatisticsResponseDto,
 } from './user.dto';
@@ -140,6 +141,29 @@ export class UserController {
       message: 'User password has been reset successfully',
       statusCode: HttpStatus.OK,
       timestamp: new Date().toISOString(),
+    } as AppResponseDto<UserResponseDto>;
+  }
+
+  @Post(':slug/role')
+  @HasRoles(RoleEnum.Manager, RoleEnum.Admin, RoleEnum.SuperAdmin)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update user role' })
+  @ApiResponseWithType({
+    status: HttpStatus.OK,
+    description: 'User role have been updated successfully',
+    type: UserResponseDto,
+  })
+  async updateUserRole(
+    @Param('slug') slug: string,
+    @Body(new ValidationPipe({ transform: true }))
+    requestData: UpdateUserRoleRequestDto,
+  ) {
+    const result = await this.userService.updateUserRole(slug, requestData);
+    return {
+      message: 'User role has been updated successfully',
+      statusCode: HttpStatus.OK,
+      timestamp: new Date().toISOString(),
+      result,
     } as AppResponseDto<UserResponseDto>;
   }
 

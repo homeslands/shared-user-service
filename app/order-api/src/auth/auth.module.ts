@@ -31,10 +31,7 @@ import { SharedModule } from 'src/shared/shared.module';
     UserModule,
     PassportModule,
     JwtModule.register({
-      privateKey: jwtConstants.privateKey,
-      publicKey: jwtConstants.publicKey,
-      signOptions: { algorithm: jwtConstants.algorithm },
-      verifyOptions: { algorithms: [jwtConstants.algorithm] },
+      secret: jwtConstants.secret,
     }),
     TypeOrmModule.forFeature([
       User,

@@ -154,6 +154,12 @@ export class GeneralUserResponseDto extends BaseResponseDto {
   readonly lastName: string;
 }
 
+export class UpdateUserRoleRequestDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  role: string;
+}
+
 export class UpdateUserRequestDto {
   @ApiProperty()
   // @IsNotEmpty({ message: INVALID_FIRSTNAME })
