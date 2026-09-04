@@ -79,6 +79,7 @@ import ExcelJS from 'exceljs';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
 import { CampaignAction } from 'src/campaign/campaign.constants';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class UserService {
@@ -152,6 +153,7 @@ export class UserService {
       image: user.image,
       isVerifiedEmail: user.isVerifiedEmail,
       isVerifiedPhonenumber: user.isVerifiedPhonenumber,
+      language: user.language,
       // Ngay dang ky that - nguon duy nhat cho createdAt cua row lazy ben
       // service tieu thu (khong dung gio tao row cuc bo/gio job chay), xem
       // issuses/sync-user-data-with-role.md muc 6.3.
@@ -213,6 +215,7 @@ export class UserService {
       email?: string;
       address?: string;
       image?: string;
+      language?: string;
     },
   ) {
     const context = `${UserService.name}.${this.updateIdentityById.name}`;
@@ -246,6 +249,57 @@ export class UserService {
     } catch (error) {
       this.logger.error(
         `Error when updating identity: ${error.message}`,
+        error.stack,
+        context,
+      );
+      throw new AuthException(AuthValidation.ERROR_UPDATE_USER);
+    }
+  }
+
+  /**
+   * Bu tru (compensating action) cho `POST /internal/users` -
+   * architect-http.md muc 1.2 quy tac 5: moi API ghi ma service khac goi
+   * toi phai co san 1 cach undo. Ben goi (trend) dung route nay khi da tao
+   * identity thanh cong o day nhung buoc luu row cuc bo cua no that bai.
+   *
+   * KHONG xoa cung hang: dung dung cach ma `AuthService.deleteAccount` da
+   * lam san cho luong tu xoa tai khoan - doi phonenumber sang chuoi ngau
+   * nhien, xoa cac field identity, tat isActive. Ly do chon cach nay thay
+   * vi `repository.delete`:
+   * - Tra lai so dien thoai cho lan tao lai - day moi la dieu ben goi thuc
+   *   su can, neu khong admin se khong bao gio tao lai duoc user do.
+   * - Khong the vo tinh vi pham khoa ngoai (User cua shared-user con ~20
+   *   quan he tu thoi monolith), nen duong rollback khong tu no that bai -
+   *   dung tinh than muc 1.2 buoc 4.
+   *
+   * Idempotent: goi lai lan 2 chi doi phonenumber sang mot chuoi ngau nhien
+   * khac, khong nem loi.
+   */
+  async revertCreatedIdentityById(id: string) {
+    const context = `${UserService.name}.${this.revertCreatedIdentityById.name}`;
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
+
+    user.phonenumber = uuidv4().replace(/-/g, '').slice(0, 20);
+    user.firstName = null;
+    user.lastName = null;
+    user.dob = null;
+    user.dobDM = null;
+    user.email = null;
+    user.address = null;
+    user.image = null;
+    user.isActive = false;
+
+    try {
+      const revertedUser = await this.userRepository.save(user);
+      this.logger.log(
+        `User ${id} identity reverted after failed create`,
+        context,
+      );
+      return this.toInternalLookupResponse(revertedUser);
+    } catch (error) {
+      this.logger.error(
+        `Error when reverting created identity: ${error.message}`,
         error.stack,
         context,
       );

@@ -36,6 +36,9 @@ interface UpdateIdentityRequest {
   email?: string;
   address?: string;
   image?: string;
+  // Ngon ngu hien thi cung la identity - PATCH /user/:slug/language ben
+  // trend ghi qua day thay vi chi ghi cot cuc bo (architect-http.md muc 1.6).
+  language?: string;
 }
 
 // Expose POST /internal/users/lookup - dung cho service khac (trend) map
@@ -108,6 +111,20 @@ export class UserInternalController {
   ) {
     await this.userService.createUser(requestData, RoleEnum.Admin);
     return this.userService.findByPhonenumber(requestData.phonenumber);
+  }
+
+  // Bu tru cho POST /internal/users (architect-http.md muc 1.2 quy tac 5):
+  // ben goi da tao identity thanh cong o day nhung buoc luu row cuc bo cua
+  // no that bai, nen phai undo lai de 2 ben khong lech. Khong xoa cung hang
+  // - tra lai so dien thoai + tat isActive, xem revertCreatedIdentityById.
+  //
+  // CHI dung cho duong rollback ngay sau khi tao. KHONG dung route nay lam
+  // API xoa tai khoan cho nghiep vu binh thuong: xoa tai khoan tu nguyen
+  // van di qua DELETE /auth/delete-account (co kiem mat khau).
+  @Public()
+  @Post(':id/revert-create')
+  async revertCreate(@Param('id') id: string) {
+    return this.userService.revertCreatedIdentityById(id);
   }
 
   // Sua identity ho service khac (vd trend goi khi admin sua thong tin
