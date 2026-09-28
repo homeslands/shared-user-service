@@ -13,6 +13,15 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
           queueOptions: { durable: false },
         },
       },
+      {
+        name: 'TERMINAL_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: 'terminal_queue',
+          queueOptions: { durable: false },
+        },
+      },
     ]),
   ],
   exports: [ClientsModule],

@@ -103,6 +103,7 @@ services:
 
       # HTTP
       TREND_API_URL: ${TREND_API_URL}
+      TERMINAL_API_URL: ${TERMINAL_API_URL}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
 
       # RabbitMQ
