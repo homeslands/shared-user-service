@@ -7,7 +7,7 @@ interface PingRequest {
   message: string;
 }
 
-// Expose POST /internal/test/ping - nhan goi HTTP noi bo tu trend.
+// Expose POST /internal/test/ping - nhan goi HTTP noi bo tu trend/terminal.
 @UseGuards(InternalApiGuard)
 @Controller('internal/test')
 export class TestInternalController {
