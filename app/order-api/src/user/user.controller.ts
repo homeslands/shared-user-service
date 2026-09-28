@@ -69,7 +69,26 @@ export class UserController {
     } as AppResponseDto<void>;
   }
 
+  // ⛔ LO HONG CUA GIAI DOAN 1 - VA 25/09/2026.
+  //
+  // Route nay TUNG khong co `@HasRoles`. `RolesGuard` cho qua khi thieu
+  // decorator, nen **bat ky tai khoan dang nhap nao - ke ca `Customer`** -
+  // cung list duoc toan bo nguoi dung kem SDT / ho ten / email. Moi route
+  // quan tri khac trong chinh controller nay deu da gac (`POST /user`,
+  // `GET /user/statistics`, `GET /user/revenue/account`); rieng no thi khong.
+  //
+  // **Sau A6 buoc 4, route nay khong con BEN TIEU THU nao.** Ben tieu thu duy
+  // nhat truoc day la `findSharedUserSlugByPhonenumber` o `trend-ui`, va ham do
+  // da bi xoa han (QD16: UI lay `slug` cuc bo thang tu danh sach `trend` roi
+  // goi `POST {trend}/user/:slug/reset-password`). Gac lai nen khong lam hong
+  // luong nao - va neu sau nay co ai cham vao day thi phai co quyen quan tri
+  // cua **shared-user**, dung nhu moi route quan tri khac cua no.
+  //
+  // Cua ma UI that su di la `GET {trend}/user` - cua do cung da duoc gac cung
+  // dot (moi role tru `Customer`), kem `GET {trend}/user/lookup-recipient` cho
+  // nhu cau tra nguoi nhan the qua o man KHACH.
   @Get()
+  @HasRoles(RoleEnum.Manager, RoleEnum.Admin, RoleEnum.SuperAdmin)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retrieve all user' })
   @ApiResponseWithType({
@@ -120,26 +139,6 @@ export class UserController {
       statusCode: HttpStatus.CREATED,
       timestamp: new Date().toISOString(),
       result,
-    } as AppResponseDto<UserResponseDto>;
-  }
-
-  @Post(':slug/reset-password')
-  @HasRoles(RoleEnum.Manager, RoleEnum.Admin, RoleEnum.SuperAdmin)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reset pwd' })
-  @ApiResponseWithType({
-    status: HttpStatus.OK,
-    description: 'User password has been reset successfully',
-    type: UserResponseDto,
-  })
-  async resetPassword(
-    @Param('slug') slug: string,
-  ): Promise<AppResponseDto<UserResponseDto>> {
-    await this.userService.resetPassword(slug);
-    return {
-      message: 'User password has been reset successfully',
-      statusCode: HttpStatus.OK,
-      timestamp: new Date().toISOString(),
     } as AppResponseDto<UserResponseDto>;
   }
 
@@ -294,27 +293,6 @@ export class UserController {
     const result = await this.userService.getUserBySlug(slug);
     return {
       message: 'User has been retrieved successfully',
-      statusCode: HttpStatus.OK,
-      timestamp: new Date().toISOString(),
-      result,
-    } as AppResponseDto<UserResponseDto>;
-  }
-
-  @Patch(':slug/toggle-active')
-  @HasRoles(RoleEnum.SuperAdmin, RoleEnum.Admin, RoleEnum.Manager)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Toggle user active status' })
-  @ApiResponseWithType({
-    status: HttpStatus.OK,
-    description: 'User active status has been toggled successfully',
-    type: UserResponseDto,
-  })
-  async toggleActiveUser(
-    @Param('slug') slug: string,
-  ): Promise<AppResponseDto<UserResponseDto>> {
-    const result = await this.userService.toggleActiveUser(slug);
-    return {
-      message: 'User active status has been toggled successfully',
       statusCode: HttpStatus.OK,
       timestamp: new Date().toISOString(),
       result,
