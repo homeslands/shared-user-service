@@ -5,27 +5,26 @@ import {
   NotFoundException,
   Param,
   Post,
+  Req,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
 import { Public } from 'src/auth/decorator/public.decorator';
-import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
-import { RoleEnum } from 'src/role/role.enum';
-import { CreateUserRequestDto } from '../user.dto';
+import {
+  InternalApiGuard,
+  InternalRequest,
+} from 'src/common/guards/internal-api.guard';
+import { INTERNAL_LIST_RECENT_DEFAULT_LIMIT } from 'src/common/constants/internal-api.constant';
 import { UserService } from '../user.service';
-
-interface LookupUserRequest {
-  phonenumber?: string;
-  id?: string;
-}
+import {
+  CreateInternalUserRequestDto,
+  ListRecentUserRequestDto,
+  LookupUserRequestDto,
+  ToggleActiveUserRequestDto,
+} from './user-internal.dto';
 
 interface BatchLookupUserRequest {
   ids: string[];
-}
-
-interface ListRecentUserRequest {
-  createdFrom: string;
-  createdTo: string;
 }
 
 interface UpdateIdentityRequest {
@@ -53,7 +52,7 @@ export class UserInternalController {
 
   @Public()
   @Post('lookup')
-  async lookup(@Body() body: LookupUserRequest) {
+  async lookup(@Body() body: LookupUserRequestDto) {
     if (!body.phonenumber && !body.id) {
       throw new BadRequestException('phonenumber or id is required');
     }
@@ -78,39 +77,56 @@ export class UserInternalController {
     return this.userService.findByIds(body.ids);
   }
 
-  // Dung cho job batch cuoi ngay ben service tieu thu (trend/terminal) tu
-  // pull user moi dang ky trong ngay ma chua tung dang nhap vao service do
-  // (bu cho khoang tre cua lazy load thuan - xem
-  // issuses/sync-user-data-with-role.md muc 6). Tra kem createdAt that -
-  // nguon duy nhat de ben goi ghi dung ngay dang ky vao row cuc bo cua no,
-  // khong duoc dung gio tao row/gio job chay.
+  // Duong DONG BO USER CHINH giua cac service (QD19 + QD21): luoi nhanh 10
+  // phut cua so 30 phut, luoi rong 1 lan/ngay cua so 48 gio, va sync-on-read
+  // cua so 15 phut co throttle. Tra kem createdAt that - nguon duy nhat de
+  // ben goi ghi dung ngay dang ky vao row cuc bo cua no, khong duoc dung gio
+  // tao row/gio job chay.
+  //
+  // PHAN TRANG BAT BUOC (`limit`/`offset`): cua so 48 gio co the la vai
+  // nghin hang sau mot dot su co. Ben goi lap cho toi khi tra ve it hon
+  // `limit` dong.
   @Public()
   @Post('list-recent')
-  async listRecent(@Body() body: ListRecentUserRequest) {
-    if (!body.createdFrom || !body.createdTo) {
-      throw new BadRequestException('createdFrom and createdTo are required');
+  async listRecent(
+    @Body(new ValidationPipe({ transform: true }))
+    body: ListRecentUserRequestDto,
+  ) {
+    const createdFrom = new Date(body.createdFrom);
+    const createdTo = new Date(body.createdTo);
+    if (createdFrom > createdTo) {
+      throw new BadRequestException('createdFrom must not be after createdTo');
     }
     return this.userService.findRecentlyCreated(
-      new Date(body.createdFrom),
-      new Date(body.createdTo),
+      createdFrom,
+      createdTo,
+      body.limit ?? INTERNAL_LIST_RECENT_DEFAULT_LIMIT,
+      body.offset ?? 0,
     );
   }
 
-  // Tao identity (phonenumber + mat khau + thong tin ca nhan) khi trend
-  // muon tao 1 user moi (vd admin tao nhan vien/khach hang). Trend quyet
-  // dinh role/branch va tu luu ban role/branch cua no o local sau khi goi
-  // xong route nay - khong dung role tra ve tu day lam nguon that.
+  // Tao identity (phonenumber + mat khau + thong tin ca nhan) khi service
+  // tieu thu muon tao 1 user moi (vd admin tao nhan vien/khach hang ben
+  // trend, hoac phat hanh lo the thanh vien).
+  //
+  // KHONG nhan `role` (QD15): hai he phan quyen doc lap, ben goi khong duoc
+  // quyet role cua shared-user. BAT BUOC co `isShared` (QD18) - xem
+  // CreateInternalUserRequestDto.
+  //
   // Tra ve entity tho (giong /internal/users/lookup) thay vi UserResponseDto
-  // vi trend can field `id` (UserResponseDto khong co, chi co `slug`) de
+  // vi ben goi can field `id` (UserResponseDto khong co, chi co `slug`) de
   // gan vao shared_user_id_column cua no.
   @Public()
   @Post()
   async createUser(
     @Body(new ValidationPipe({ transform: true }))
-    requestData: CreateUserRequestDto,
+    requestData: CreateInternalUserRequestDto,
+    @Req() request: InternalRequest,
   ) {
-    await this.userService.createUser(requestData, RoleEnum.Admin);
-    return this.userService.findByPhonenumber(requestData.phonenumber);
+    return this.userService.createInternalUser(
+      requestData,
+      request.internalService ?? null,
+    );
   }
 
   // Bu tru cho POST /internal/users (architect-http.md muc 1.2 quy tac 5):
@@ -138,5 +154,37 @@ export class UserInternalController {
     @Body() body: UpdateIdentityRequest,
   ) {
     return this.userService.updateIdentityById(id, body);
+  }
+
+  // QD16 - dat lai mat khau HO ben goi.
+  //
+  // **Khong kiem quyen o day, va do la chu y.** Ai duoc phep dat lai mat
+  // khau cua nguoi khac la cau hoi ve CHUC VU TRONG CUA HANG - du kien do
+  // chi `trend` giu dung. Cua kiem quyen dat o noi giu du kien quyet dinh;
+  // shared-user chi THI HANH tren identity. De shared-user tu tra loi la bat
+  // no doan bang mot ban role khong ai cap nhat - dung co che sinh ra R1.
+  //
+  // Nhan `:id` chu khong phai `:slug` (muc 1.3: uu tien id). Day cung la thu
+  // xoa han R6: ben goi khong con phai tra nguoc slug theo SDT nua.
+  @Public()
+  @Post(':id/reset-password')
+  async resetPassword(@Param('id') id: string) {
+    return this.userService.resetPasswordById(id);
+  }
+
+  // QD16 - khoa/mo khoa tai khoan HO ben goi. Cung ly do khong kiem quyen
+  // nhu reset-password o tren.
+  //
+  // Nhan `isActive` trong body, KHONG tu dao trang thai: goi lai hai lan
+  // phai ra cung mot ket qua. Trang thai khoa van chi co MOT NGUON THAT la
+  // shared_user_db - ben goi khong ghi cot nao cua no o duong nay.
+  @Public()
+  @Post(':id/toggle-active')
+  async toggleActive(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true }))
+    body: ToggleActiveUserRequestDto,
+  ) {
+    return this.userService.setActiveById(id, body.isActive);
   }
 }

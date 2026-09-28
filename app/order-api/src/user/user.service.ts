@@ -40,6 +40,7 @@ import {
   UserStatisticItemDto,
   UserStatisticsResponseDto,
 } from './user.dto';
+import { CreateInternalUserRequestDto } from './internal/user-internal.dto';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
 import { MailService } from 'src/mail/mail.service';
 import { ConfigService } from '@nestjs/config';
@@ -154,6 +155,11 @@ export class UserService {
       isVerifiedEmail: user.isVerifiedEmail,
       isVerifiedPhonenumber: user.isVerifiedPhonenumber,
       language: user.language,
+      // QD18 - null = tai khoan dung chung (khach), co gia tri = rieng cua
+      // service do. Ben goi can field nay de quyet co tu cap hang cuc bo hay
+      // khong: hang cua service KHAC thi khong duoc tao. shared-user chi MO
+      // TA, khong chan - quyet dinh nam o ben goi (xem User.ownerService).
+      ownerService: user.ownerService ?? null,
       // Ngay dang ky that - nguon duy nhat cho createdAt cua row lazy ben
       // service tieu thu (khong dung gio tao row cuc bo/gio job chay), xem
       // issuses/sync-user-data-with-role.md muc 6.3.
@@ -191,10 +197,25 @@ export class UserService {
   // createdTo) de bu cho khoang tre cua lazy load thuan (user dang ky roi
   // nhung chua tung dang nhap vao service do thi khong co row cuc bo o day).
   // Xem issuses/sync-user-data-with-role.md muc 6.
-  async findRecentlyCreated(createdFrom: Date, createdTo: Date) {
+  //
+  // QD19 + QD21 - route nay nay la duong DONG BO USER CHINH giua cac service
+  // (luoi nhanh 10 phut, luoi rong 48 gio, sync-on-read), nen:
+  //  - PHAN TRANG bat buoc: cua so 48 gio co the la vai nghin hang sau mot
+  //    dot su co, tra mot cuc la vo dung luc can no nhat;
+  //  - sap xep on dinh theo (createdAt, id) - chi sap theo createdAt thi hai
+  //    hang cung moc thoi gian co the doi cho giua hai trang, lam sot nguoi;
+  //  - loc theo created_at_column co index (migration v4.0.0-02).
+  async findRecentlyCreated(
+    createdFrom: Date,
+    createdTo: Date,
+    limit: number,
+    offset: number,
+  ) {
     const users = await this.userRepository.find({
       where: { createdAt: Between(createdFrom, createdTo) },
-      order: { createdAt: 'ASC' },
+      order: { createdAt: 'ASC', id: 'ASC' },
+      take: limit,
+      skip: offset,
     });
     return users.map((user) => this.toInternalLookupResponse(user));
   }
@@ -305,6 +326,75 @@ export class UserService {
       );
       throw new AuthException(AuthValidation.ERROR_UPDATE_USER);
     }
+  }
+
+  /**
+   * Duong TAO USER cho service tieu thu (POST /internal/users).
+   *
+   * Khac `createUser` client-facing o hai diem, ca hai deu la quyet dinh
+   * thiet ke chu khong phai tien tay:
+   *
+   * 1. **Khong nhan `role`** (QD15). `trend` va `shared-user` co hai he phan
+   *    quyen DOC LAP; de ben goi truyen role cua no sang cho shared-user tra
+   *    trong `role_tbl` cua minh la ghep hai he vao nhau - dung co che sinh
+   *    ra R1. shared-user tu gan role mac dinh CUA CHINH NO.
+   *
+   * 2. **Bat buoc co `isShared`** (QD18) va dich cua no la cot BAT BIEN
+   *    `owner_service`. Ten service ghi vao do lay tu `callerService`
+   *    (header noi bo), KHONG lay tu body - de mot service khong khai duoc
+   *    hang thuoc ve service khac.
+   */
+  async createInternalUser(
+    requestData: CreateInternalUserRequestDto,
+    callerService: string | null,
+  ) {
+    const context = `${UserService.name}.${this.createInternalUser.name}`;
+
+    if (!requestData.isShared && !callerService) {
+      // isShared=false nghia la "hang nay thuoc ve rieng toi", ma khong biet
+      // "toi" la ai thi khong ghi duoc. Hong on ao con hon ghi mot gia tri
+      // doan mo vao mot cot khong sua lai duoc.
+      this.logger.error(
+        `Internal create user with isShared=false but caller service is unknown`,
+        null,
+        context,
+      );
+      throw new BadRequestException(
+        `Header x-internal-service is required when isShared is false`,
+      );
+    }
+
+    // Role mac dinh CUA SHARED-USER. Khong bo cot role_column di (QD15):
+    // moi user tao qua duong noi bo ma khong co role thi tut het guard
+    // client-facing cua chinh shared-user.
+    const defaultRole = await this.roleRepository.findOne({
+      where: { name: RoleEnum.Customer },
+    });
+    if (!defaultRole) {
+      this.logger.error(
+        `Default role ${RoleEnum.Customer} not found`,
+        null,
+        context,
+      );
+      throw new RoleException(RoleValidation.ROLE_NOT_FOUND);
+    }
+
+    const payload = new CreateUserRequestDto();
+    Object.assign(payload, {
+      phonenumber: requestData.phonenumber,
+      password: requestData.password,
+      firstName: requestData.firstName,
+      lastName: requestData.lastName,
+      dob: requestData.dob,
+      isVerifiedPhonenumber: requestData.isVerifiedPhonenumber,
+    });
+
+    await this.createUser(payload, RoleEnum.Admin, {
+      role: defaultRole,
+      ownerService: requestData.isShared ? null : callerService,
+    });
+
+    return this.findByPhonenumber(requestData.phonenumber);
   }
 
   async updateUser(slug: string, requestData: UpdateUserRequestDto) {
@@ -478,15 +568,28 @@ export class UserService {
     );
   }
 
-  async createUser(requestData: CreateUserRequestDto, createdRole: string) {
+  // `options` chi duoc truyen tu duong NOI BO (createInternalUser):
+  //   - `role`: da tra san, khong tra lai theo `requestData.role`. Route noi
+  //     bo khong nhan `role` nua (QD15) - shared-user tu gan role mac dinh
+  //     cua chinh no.
+  //   - `ownerService`: QD18. `null` = tai khoan dung chung (khach).
+  // Duong client-facing POST /user khong truyen `options` => giu nguyen hanh
+  // vi cu, va `ownerService` de `null` (huong lanh cua bat doi xung loi).
+  async createUser(
+    requestData: CreateUserRequestDto,
+    createdRole: string,
+    options?: { role?: Role; ownerService?: string | null },
+  ) {
     const context = `${UserService.name}.${this.createUser.name}`;
 
     // Check if role exists
-    const role = await this.roleRepository.findOne({
-      where: {
-        slug: requestData.role,
-      },
-    });
+    const role =
+      options?.role ??
+      (await this.roleRepository.findOne({
+        where: {
+          slug: requestData.role,
+        },
+      }));
     if (!role) {
       this.logger.error(`Role is not found`, null, context);
       throw new RoleException(RoleValidation.ROLE_NOT_FOUND);
@@ -512,6 +615,8 @@ export class UserService {
     Object.assign(user, {
       password: hashedPass,
       role,
+      // QD18 - cot BAT BIEN, chi duoc gan DUNG MOT LAN o day.
+      ownerService: options?.ownerService ?? null,
     });
 
     if (requestData.branch) {
@@ -580,21 +685,31 @@ export class UserService {
     return this.mapper.map(user, User, UserResponseDto);
   }
 
-  async resetPassword(slug: string) {
-    const context = `${UserService.name}.${this.resetPassword.name}`;
-    const user = await this.userRepository.findOne({
-      where: { slug },
-    });
+  /**
+   * QD16 - dat lai mat khau HO ben goi, tra theo `id`.
+   *
+   * **Khong kiem quyen o day, va do la chu y.** Quyen da duoc kiem o `trend` -
+   * noi giu du kien quyet dinh (chuc vu trong cua hang). shared-user chi THI
+   * HANH tren identity.
+   *
+   * Thay cho `resetPassword(slug)` cu (route client-facing
+   * `POST /user/:slug/reset-password`, da xoa o A6 buoc 5): ban cu gac bang
+   * `@HasRoles` cua CHINH shared-user, doc mot ban `role_tbl` khong ai cap
+   * nhat - dung co che sinh ra R1 (admin vua duoc cap quyen o `trend` bi 403
+   * oan).
+   */
+  async resetPasswordById(id: string) {
+    const context = `${UserService.name}.${this.resetPasswordById.name}`;
+    const user = await this.userRepository.findOne({ where: { id } });
     if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
 
     const newPassword = Math.random().toString(36).slice(-8);
-    const hashedPass = await bcrypt.hash(newPassword, this.saltOfRounds);
-
-    user.password = hashedPass;
+    user.password = await bcrypt.hash(newPassword, this.saltOfRounds);
     await this.userRepository.save(user);
-    this.logger.log(`User password reset for ${user.email}`, context);
+    this.logger.log(`User ${id} password reset via internal route`, context);
 
     this.mailService.sendNewPassword(user, newPassword);
+    return this.toInternalLookupResponse(user);
   }
 
   async getAllUsers(
@@ -1023,20 +1138,29 @@ export class UserService {
     return { summary, customers, data, total };
   }
 
-  async toggleActiveUser(slug: string) {
-    const context = `${UserService.name}.${this.toggleActiveUser.name}`;
-    const user = await this.userRepository.findOne({
-      where: { slug },
-    });
-    if (!user) {
-      this.logger.warn(`User ${slug} not found`, context);
-      throw new UserException(UserValidation.USER_NOT_FOUND);
-    }
+  /**
+   * QD16 - khoa/mo khoa tai khoan HO ben goi, tra theo `id`.
+   *
+   * Nhan gia tri DICH (`isActive`), khong tu dao: goi lai lan hai phai ra
+   * cung mot ket qua. Voi mot lenh di qua mang (retry, double-click) thi "dao
+   * trang thai" la mot hop dong sai.
+   *
+   * Day van la NGUON THAT DUY NHAT cua trang thai khoa - `trend` khong ghi
+   * cot nao cua no o duong nay. Thay cho `toggleActiveUser(slug)` cu (route
+   * `PATCH /user/:slug/toggle-active`, da xoa o A6 buoc 5).
+   */
+  async setActiveById(id: string, isActive: boolean) {
+    const context = `${UserService.name}.${this.setActiveById.name}`;
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
 
-    user.isActive = !user.isActive;
+    user.isActive = isActive;
     await this.userRepository.save(user);
-    this.logger.log(`User ${slug} active status has been toggled`, context);
-    return this.mapper.map(user, User, UserResponseDto);
+    this.logger.log(
+      `User ${id} active status set to ${isActive} via internal route`,
+      context,
+    );
+    return this.toInternalLookupResponse(user);
   }
 
   async updateUserLanguage(

@@ -5,6 +5,7 @@ import {
   JoinColumn,
   OneToMany,
   OneToOne,
+  Index,
 } from 'typeorm';
 import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
@@ -28,6 +29,11 @@ import { MembershipCard } from 'src/membership-card/membership-card.entity';
 import { UserRequirement } from './user-requirement.entity';
 import { CampaignRecipient } from 'src/campaign/entity/campaign-recipient.entity';
 
+// QD19 + QD21: index cho list-recent loc theo created_at_column (migration
+// v4.0.0-02). Khai bao o cap class vi cot nam o Base - dat @Index trong Base
+// se danh index moi bang ke thua no. Ten phai khop migration, khong thi
+// migration:generate sinh DROP + CREATE.
+@Index('IDX_user_tbl_created_at_column', ['createdAt'])
 @Entity('user_tbl')
 export class User extends Base {
   @AutoMap()
@@ -52,6 +58,32 @@ export class User extends Base {
   @Column({ name: 'is_active_column', default: true })
   @AutoMap()
   isActive: boolean;
+
+  // QD18 - danh tinh DUNG CHUNG vs RIENG cua mot service:
+  //   null      = tai khoan dung chung (khach). Moi service tieu thu duoc tu
+  //               cap hang cuc bo voi role mac dinh cua chinh no.
+  //   'trend'   = rieng cua trend (nhan vien, hang he thong). Service khac
+  //               KHONG duoc tu cap hang cuc bo.
+  //   Sentinel khach vang lai de null (khach dung chung toan cum), nhan dien
+  //   bang DEFAULT_CUSTOMER_SHARED_ID, khong bang cot nay.
+  //
+  // COT MO TA, KHONG PHAI CUA CHAN: shared-user tra gia tri nay ra trong
+  // lookup/batch-lookup/list-recent, BEN GOI tu quyet dinh. shared-user
+  // khong tu choi tra du lieu dua tren cot nay - lam the la no quay lai lam
+  // authorization (mau thuan QD15).
+  //
+  // COT BAT BIEN: da co gia tri thi khong doi, khong co duong thang
+  // 'trend' -> null. Nguoi vua la nhan vien vua la khach phai co hai tai
+  // khoan, hai SDT. Xem architect-http.md muc 1.1 quy tac 6.
+  @Index('IDX_user_tbl_owner_service_column')
+  @Column({
+    name: 'owner_service_column',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  @AutoMap()
+  ownerService?: string | null;
 
   @Column({ name: 'dob_column', nullable: true })
   @AutoMap()
