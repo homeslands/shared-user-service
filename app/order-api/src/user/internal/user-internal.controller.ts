@@ -18,6 +18,7 @@ import { INTERNAL_LIST_RECENT_DEFAULT_LIMIT } from 'src/common/constants/interna
 import { UserService } from '../user.service';
 import {
   CreateInternalUserRequestDto,
+  ImportInternalUserRequestDto,
   ListRecentUserRequestDto,
   LookupUserRequestDto,
   ToggleActiveUserRequestDto,
@@ -124,6 +125,25 @@ export class UserInternalController {
     @Req() request: InternalRequest,
   ) {
     return this.userService.createInternalUser(
+      requestData,
+      request.internalService ?? null,
+    );
+  }
+
+  // NHAP MOT LAN tai khoan da co tu truoc o service tieu thu (vd nhan vien
+  // terminal) - giu nguyen hash mat khau, isActive, createdAt. Trung SDT hoac
+  // email => 409 (`message` noi ro trung cai nao). Xem
+  // UserService.importInternalUser.
+  //
+  // Duong bu tru: `:id/revert-create` ngay duoi, nhu POST /internal/users.
+  @Public()
+  @Post('import')
+  async importUser(
+    @Body(new ValidationPipe({ transform: true }))
+    requestData: ImportInternalUserRequestDto,
+    @Req() request: InternalRequest,
+  ) {
+    return this.userService.importInternalUser(
       requestData,
       request.internalService ?? null,
     );

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -40,7 +41,11 @@ import {
   UserStatisticItemDto,
   UserStatisticsResponseDto,
 } from './user.dto';
-import { CreateInternalUserRequestDto } from './internal/user-internal.dto';
+import {
+  CreateInternalUserRequestDto,
+  ImportInternalUserRequestDto,
+} from './internal/user-internal.dto';
+import { randomBytes } from 'crypto';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
 import { MailService } from 'src/mail/mail.service';
 import { ConfigService } from '@nestjs/config';
@@ -81,6 +86,18 @@ import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
 import { CampaignAction } from 'src/campaign/campaign.constants';
 import { v4 as uuidv4 } from 'uuid';
+
+// Thong diep 409 cua POST /internal/users/import - ben goi phan biet trung
+// SDT voi trung email bang chinh chuoi nay. Co tinh KHONG dung khoa trong
+// AuthValidation (vd EMAIL_ALREADY_EXISTS): HttpExceptionFilter gap khoa do
+// se doi thanh 422 + ma loi rieng, mat ma 409.
+export const IMPORT_CONFLICT_PHONENUMBER = 'Phonenumber already exists';
+export const IMPORT_CONFLICT_EMAIL = 'Email already exists';
+export const IMPORT_CONFLICT_RACE = 'Phonenumber or email already exists';
+
+// Cung dinh dang ma CreateUserRequestDto.dob ep - dung de suy `dobDM` khi
+// nhap du lieu cu (route import khong ep dinh dang dob).
+const DOB_PATTERN = /^(0[1-9]|[12]\d|3[0-1])\/(0[1-9]|1[0-2])\/(19|20)\d{2}$/;
 
 @Injectable()
 export class UserService {
@@ -395,6 +412,147 @@ export class UserService {
     });
 
     return this.findByPhonenumber(requestData.phonenumber);
+  }
+
+  /**
+   * NHAP MOT LAN tai khoan da co tu truoc o service tieu thu
+   * (POST /internal/users/import) - vd nhan vien `terminal` truoc khi
+   * `terminal` noi vao shared-user.
+   *
+   * Khac `createInternalUser`:
+   * - Ghi `passwordHash` NGUYEN TRANG, khong bam lai - nguoi dung dang nhap
+   *   bang mat khau cu. Khong co hash => sinh hash cua mot chuoi ngau nhien
+   *   khong ai biet: tai khoan ton tai nhung chi vao duoc sau khi dat lai mat
+   *   khau (QD16).
+   * - Giu `isActive`/`createdAt`/`email` cua ben cu.
+   * - **Khong phat event `USER_CREATED`/`USER_BIRTHDAY_TRIGGERED`**: day la
+   *   chuyen nha, khong phai dang ky moi - phat event la tang voucher chao
+   *   mung cho nguoi da dung he thong tu lau.
+   *
+   * Trung SDT hoac email => **409**, `message` noi ro trung cai nao. Ben goi
+   * (script nhap) can phan biet "da co nguoi" voi loi khac de quyet dinh gan
+   * hay bo hang cuc bo cua no; 400 chung chung thi khong lam duoc viec do.
+   * KHONG tra kem id hang dang giu: `HttpExceptionFilter` chi giu `message`,
+   * ben goi tu tra lai theo SDT neu can.
+   */
+  async importInternalUser(
+    requestData: ImportInternalUserRequestDto,
+    callerService: string | null,
+  ) {
+    const context = `${UserService.name}.${this.importInternalUser.name}`;
+
+    if (!requestData.isShared && !callerService) {
+      this.logger.error(
+        `Internal import user with isShared=false but caller service is unknown`,
+        null,
+        context,
+      );
+      throw new BadRequestException(
+        `Header x-internal-service is required when isShared is false`,
+      );
+    }
+
+    const existedPhonenumber = await this.userRepository.findOne({
+      where: { phonenumber: requestData.phonenumber },
+    });
+    if (existedPhonenumber) {
+      this.logger.warn(
+        `Import rejected: phonenumber already belongs to ${existedPhonenumber.id}`,
+        context,
+      );
+      throw new ConflictException(IMPORT_CONFLICT_PHONENUMBER);
+    }
+
+    if (requestData.email) {
+      const existedEmail = await this.userRepository.findOne({
+        where: { email: requestData.email },
+      });
+      if (existedEmail) {
+        this.logger.warn(
+          `Import rejected: email already belongs to ${existedEmail.id}`,
+          context,
+        );
+        throw new ConflictException(IMPORT_CONFLICT_EMAIL);
+      }
+    }
+
+    const defaultRole = await this.roleRepository.findOne({
+      where: { name: RoleEnum.Customer },
+    });
+    if (!defaultRole) {
+      this.logger.error(
+        `Default role ${RoleEnum.Customer} not found`,
+        null,
+        context,
+      );
+      throw new RoleException(RoleValidation.ROLE_NOT_FOUND);
+    }
+
+    const password =
+      requestData.passwordHash ??
+      (await bcrypt.hash(randomBytes(32).toString('hex'), this.saltOfRounds));
+
+    const [day, month] = DOB_PATTERN.test(requestData.dob ?? '')
+      ? requestData.dob.split('/')
+      : [];
+
+    const user = this.userRepository.create({
+      phonenumber: requestData.phonenumber,
+      password,
+      firstName: requestData.firstName ?? null,
+      lastName: requestData.lastName ?? null,
+      email: requestData.email ?? null,
+      dob: requestData.dob ?? null,
+      dobDM: day && month ? `${day}${month}` : null,
+      address: requestData.address ?? null,
+      image: requestData.image ?? null,
+      isActive: requestData.isActive,
+      isVerifiedPhonenumber: requestData.isVerifiedPhonenumber ?? false,
+      isVerifiedEmail: requestData.isVerifiedEmail ?? false,
+      role: defaultRole,
+      // QD18 - cot BAT BIEN, chi duoc gan DUNG MOT LAN o day.
+      ownerService: requestData.isShared ? null : callerService,
+    });
+    if (requestData.createdAt) user.createdAt = new Date(requestData.createdAt);
+
+    // Cung hai requirement da COMPLETED nhu `createUser` - tai khoan nhap vao
+    // la tai khoan dang dung, khong bi chan o buoc hoan tat dang ky.
+    user.userRequirements = [
+      UserRequirementKey.NEED_UPDATE_PHONE_NUMBER,
+      UserRequirementKey.NEED_UPDATE_PASSWORD,
+    ].map((key) =>
+      Object.assign(new UserRequirement(), {
+        key,
+        status: UserRequirementStatus.COMPLETED,
+        level: UserRequirementLevel.BLOCK,
+        scope: UserRequirementScope.INITIAL,
+      }),
+    );
+
+    let createdUser: User;
+    try {
+      createdUser = await this.userRepository.save(user);
+    } catch (error) {
+      // Race: mot lenh khac vua chiem SDT/email giua buoc kiem va buoc ghi.
+      if (error?.code === 'ER_DUP_ENTRY') {
+        this.logger.warn(`Import raced on unique key: ${error.message}`, context);
+        throw new ConflictException(IMPORT_CONFLICT_RACE);
+      }
+      this.logger.error(
+        `Error when importing user: ${error.message}`,
+        error.stack,
+        context,
+      );
+      throw new UserException(UserValidation.ERROR_CREATE_USER);
+    }
+
+    await this.sharedBalanceService.create({ userSlug: createdUser.slug });
+    this.logger.log(
+      `User ${createdUser.id} imported (ownerService=${createdUser.ownerService ?? 'null'}, passwordHash=${requestData.passwordHash ? 'kept' : 'random'})`,
+      context,
+    );
+
+    return this.toInternalLookupResponse(createdUser);
   }
 
   async updateUser(slug: string, requestData: UpdateUserRequestDto) {

@@ -65,6 +65,101 @@ export class CreateInternalUserRequestDto {
   isShared: boolean;
 }
 
+// Chuoi bcrypt day du: `$2a$`/`$2b$`/`$2y$` + cost 2 chu so + 53 ky tu
+// (22 salt + 31 hash). Kiem DINH DANG chu khong kiem cost: bcrypt.compare doc
+// cost/salt tu chinh chuoi hash, nen hash sinh voi SALT_ROUNDS khac van dang
+// nhap duoc.
+export const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
+
+// DTO RIENG cho POST /internal/users/import - NHAP MOT LAN tai khoan da co
+// tu truoc o service tieu thu (vd nhan vien terminal truoc khi terminal noi
+// vao shared-user). Khac CreateInternalUserRequestDto o cho:
+//
+// - Nhan `passwordHash` (da bam), KHONG nhan mat khau tho: route nay chuyen
+//   nguyen tai khoan cu sang, nguoi dung dang nhap duoc bang mat khau cu.
+//   Bo trong => shared-user sinh mot hash ngau nhien khong ai biet, nguoi do
+//   chi vao duoc sau khi dat lai mat khau (QD16).
+// - Nhan them `email`/`isActive`/`createdAt`/... - nhung thu route tao moi
+//   khong can vi tai khoan moi khong co lich su.
+//
+// Van KHONG nhan `role` (QD15) va van BAT BUOC `isShared` (QD18).
+export class ImportInternalUserRequestDto {
+  @ApiProperty()
+  @IsNotEmpty({ message: 'phonenumber is required' })
+  @IsString()
+  phonenumber: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @Matches(BCRYPT_HASH_PATTERN, {
+    message: 'passwordHash must be a bcrypt hash',
+  })
+  passwordHash?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  // Khong ep dinh dang: day la du lieu CU cua service khac, tu choi vi dinh
+  // dang la de mot tai khoan that bi bo lai. Email trung thi bao 409.
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  // Cung ly do tren - khong ep dd/mm/yyyy. `dobDM` chi duoc suy ra khi chuoi
+  // dung dinh dang do.
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  dob?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  image?: string;
+
+  // BAT BUOC, khong mac dinh `true`: tai khoan dang bi khoa ben kia ma sang
+  // day thanh mo khoa la mo cua cho mot nguoi da bi chan.
+  @ApiProperty()
+  @IsNotEmpty({ message: 'isActive is required' })
+  @IsBoolean({ message: 'isActive must be a boolean' })
+  isActive: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  isVerifiedPhonenumber?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  isVerifiedEmail?: boolean;
+
+  // Ngay tao THAT ben service cu. Bo trong => gio nhap.
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsDateString({}, { message: 'createdAt must be an ISO date string' })
+  createdAt?: string;
+
+  // QD18 - xem CreateInternalUserRequestDto.isShared.
+  @ApiProperty()
+  @IsNotEmpty({ message: 'isShared is required' })
+  @IsBoolean({ message: 'isShared must be a boolean' })
+  isShared: boolean;
+}
+
 export class LookupUserRequestDto {
   @IsOptional()
   @IsString()
