@@ -3,6 +3,11 @@
 // lo theo dung hang so nay; ben nhan tu choi (400) khi vuot - KHONG cat bot
 // im lang, vi cat im lang la mat nguoi trong danh sach ma khong ai biet.
 
+// A4 - POST /internal/users/batch-lookup. Tran so id mot lo; vuot tran => 400.
+// Khai SONG DOI, cung ten cung gia tri, o trend va terminal (ben goi tu chia
+// lo theo hang so nay).
+export const INTERNAL_BATCH_LOOKUP_MAX = 200;
+
 // QD21 - POST /internal/users/list-recent. Luoi rong quet cua so 48 gio,
 // co the la vai nghin hang sau mot dot su co => phan trang la BAT BUOC,
 // khong con la de phong. Ben goi lap cho toi khi tra ve it hon `limit`.
