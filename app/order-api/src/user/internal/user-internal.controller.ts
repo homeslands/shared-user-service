@@ -14,19 +14,19 @@ import {
   InternalApiGuard,
   InternalRequest,
 } from 'src/common/guards/internal-api.guard';
-import { INTERNAL_LIST_RECENT_DEFAULT_LIMIT } from 'src/common/constants/internal-api.constant';
+import {
+  INTERNAL_BATCH_LOOKUP_MAX,
+  INTERNAL_LIST_RECENT_DEFAULT_LIMIT,
+} from 'src/common/constants/internal-api.constant';
 import { UserService } from '../user.service';
 import {
+  BatchLookupUserRequestDto,
   CreateInternalUserRequestDto,
   ImportInternalUserRequestDto,
   ListRecentUserRequestDto,
   LookupUserRequestDto,
   ToggleActiveUserRequestDto,
 } from './user-internal.dto';
-
-interface BatchLookupUserRequest {
-  ids: string[];
-}
 
 interface UpdateIdentityRequest {
   phonenumber?: string;
@@ -69,11 +69,20 @@ export class UserInternalController {
   // Batch cua /lookup theo id - dung khi trend can ghep identity vao ca 1
   // trang danh sach user (GET /user ben trend, xem architect-http.md muc
   // 1.1 quy tac 4), tranh goi lookup rieng N+1 lan theo tung dong.
+  //
+  // A4 - lo rong va lo vuot INTERNAL_BATCH_LOOKUP_MAX deu 400. KHONG tu cat
+  // bot im lang: ben goi se tuong minh da hoi du, va nguoi bi cat mat khoi
+  // danh sach ma khong ai biet. Ben goi (trend, terminal) tu chia lo.
   @Public()
   @Post('batch-lookup')
-  async batchLookup(@Body() body: BatchLookupUserRequest) {
-    if (!body.ids || !body.ids.length) {
-      return [];
+  async batchLookup(
+    @Body(new ValidationPipe({ transform: true }))
+    body: BatchLookupUserRequestDto,
+  ) {
+    if (body.ids.length > INTERNAL_BATCH_LOOKUP_MAX) {
+      throw new BadRequestException(
+        `batch-lookup accepts at most ${INTERNAL_BATCH_LOOKUP_MAX} ids per call (got ${body.ids.length}) - split the batch on the caller side`,
+      );
     }
     return this.userService.findByIds(body.ids);
   }
