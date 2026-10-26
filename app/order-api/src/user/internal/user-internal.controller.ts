@@ -58,8 +58,8 @@ export class UserInternalController {
       throw new BadRequestException('phonenumber or id is required');
     }
     const user = body.id
-      ? await this.userService.findById(body.id)
-      : await this.userService.findByPhonenumber(body.phonenumber);
+      ? await this.userService.lookupById(body.id)
+      : await this.userService.lookupByPhonenumber(body.phonenumber);
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -84,7 +84,7 @@ export class UserInternalController {
         `batch-lookup accepts at most ${INTERNAL_BATCH_LOOKUP_MAX} ids per call (got ${body.ids.length}) - split the batch on the caller side`,
       );
     }
-    return this.userService.findByIds(body.ids);
+    return this.userService.lookupByIds(body.ids);
   }
 
   // Duong DONG BO USER CHINH giua cac service (QD19 + QD21): luoi nhanh 10
