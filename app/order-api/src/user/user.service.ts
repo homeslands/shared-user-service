@@ -184,29 +184,73 @@ export class UserService {
     };
   }
 
+  // QD22.c - response cua RIENG hai route `lookup` / `batch-lookup`: shape
+  // `toInternalLookupResponse` + `userRequirements` du field. Order service
+  // tu loc khoa BLOCK dang PENDING (chan len don) va ghep nguyen mang vao
+  // response cua no (GET /user, GET /auth/profile - muc 1.4). Sau route noi bo
+  // khac giu nguyen shape nen KHONG gan field nay vao `toInternalLookupResponse`.
+  private toInternalLookupWithRequirementsResponse(user: User) {
+    return {
+      ...this.toInternalLookupResponse(user),
+      userRequirements: (user.userRequirements ?? []).map((requirement) => ({
+        slug: requirement.slug,
+        key: requirement.key,
+        status: requirement.status,
+        level: requirement.level,
+        scope: requirement.scope,
+        expiredAt: requirement.expiredAt ?? null,
+        lastUpdatedAt: requirement.lastUpdatedAt ?? null,
+        createdAt: requirement.createdAt,
+      })),
+    };
+  }
+
+  // Dung cho createInternalUser - giu shape `toInternalLookupResponse` (khong
+  // co userRequirements). Route `lookup` theo SDT di `lookupByPhonenumber`.
   async findByPhonenumber(phonenumber: string) {
     const user = await this.userRepository.findOne({ where: { phonenumber } });
     if (!user) return null;
     return this.toInternalLookupResponse(user);
   }
 
+  // POST /internal/users/lookup theo SDT - kem userRequirements (QD22.c).
+  async lookupByPhonenumber(phonenumber: string) {
+    const user = await this.userRepository.findOne({
+      where: { phonenumber },
+      relations: { userRequirements: true },
+    });
+    if (!user) return null;
+    return this.toInternalLookupWithRequirementsResponse(user);
+  }
+
   // Dung cho InternalUserController - JwtStrategy cua service khac (trend)
   // chi co payload.sub (id that cua shared-user, khong co phonenumber trong
   // token) nen can tra cuu nguoc lai theo id de tu tao row cuc bo lan dau
   // user do goi sang (xem issuses/sync-user-data-with-role.md), dong thoi la
-  // cho trend hoi trang thai khoa tai khoan moi lan xac thuc.
-  async findById(id: string) {
-    const user = await this.userRepository.findOne({ where: { id } });
+  // cho trend hoi trang thai khoa tai khoan moi lan xac thuc. Kem
+  // userRequirements (QD22.c) de order service chan len don ngay trong luot
+  // tra nay, khong goi them.
+  async lookupById(id: string) {
+    const user = await this.userRepository.findOne({
+      where: { id },
+      relations: { userRequirements: true },
+    });
     if (!user) return null;
-    return this.toInternalLookupResponse(user);
+    return this.toInternalLookupWithRequirementsResponse(user);
   }
 
-  // Batch cua findById - dung khi trend can ghep identity vao ca 1 trang
+  // Batch cua lookupById - dung khi trend can ghep identity vao ca 1 trang
   // danh sach user (GET /user ben trend), tranh goi N+1 lan theo tung dong.
-  async findByIds(ids: string[]) {
+  // Cung la noi bulk-issue the (QD22.b) lay `user` du shape lookup.
+  async lookupByIds(ids: string[]) {
     if (!ids.length) return [];
-    const users = await this.userRepository.find({ where: { id: In(ids) } });
-    return users.map((user) => this.toInternalLookupResponse(user));
+    const users = await this.userRepository.find({
+      where: { id: In(ids) },
+      relations: { userRequirements: true },
+    });
+    return users.map((user) =>
+      this.toInternalLookupWithRequirementsResponse(user),
+    );
   }
 
   // Dung cho InternalUserController - job batch cuoi ngay ben service tieu
@@ -257,7 +301,10 @@ export class UserService {
     },
   ) {
     const context = `${UserService.name}.${this.updateIdentityById.name}`;
-    const user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.userRepository.findOne({
+      where: { id },
+      relations: { userRequirements: true },
+    });
     if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
 
     if (data.phonenumber && data.phonenumber !== user.phonenumber) {
@@ -271,6 +318,19 @@ export class UserService {
           context,
         );
         throw new AuthException(AuthValidation.PHONE_NUMBER_ALREADY_EXISTS);
+      }
+
+      // QD22 - doi SDT that (vd chu the hoan tat dang ky o quay) => khoa
+      // NEED_UPDATE_PHONE_NUMBER xong. Luu cung `user` (cascade update).
+      // NEED_UPDATE_PASSWORD KHONG go o day - chi luong quen mat khau go
+      // (QD22.d).
+      const blockedPhonenumberRequirement = (user.userRequirements ?? []).find(
+        (requirement) =>
+          requirement.key === UserRequirementKey.NEED_UPDATE_PHONE_NUMBER &&
+          requirement.status === UserRequirementStatus.PENDING,
+      );
+      if (blockedPhonenumberRequirement) {
+        blockedPhonenumberRequirement.status = UserRequirementStatus.COMPLETED;
       }
     }
 

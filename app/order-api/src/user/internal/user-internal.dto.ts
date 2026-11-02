@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsNotEmpty,
   IsOptional,
@@ -168,6 +170,19 @@ export class LookupUserRequestDto {
   @IsOptional()
   @IsString()
   id?: string;
+}
+
+// A4 - POST /internal/users/batch-lookup. Lo RONG la ben goi tinh sai chi so
+// chia lo => 400 thay vi tra [] im lang. Tran so id (INTERNAL_BATCH_LOOKUP_MAX)
+// kiem o controller, kem con so trong thong bao loi.
+export class BatchLookupUserRequestDto {
+  // Thu tu co chu y: HttpExceptionFilter chi giu thong bao DAU TIEN, ma
+  // class-validator bao loi theo thu tu nguoc voi thu tu khai decorator.
+  // @IsArray dat CUOI de body sai kieu nhan dung cau "must be an array".
+  @IsString({ each: true, message: 'each id must be a string' })
+  @ArrayNotEmpty({ message: 'ids must not be empty' })
+  @IsArray({ message: 'ids must be an array' })
+  ids: string[];
 }
 
 export class ListRecentUserRequestDto {
