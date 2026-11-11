@@ -120,52 +120,18 @@ export class UserScheduler {
     }
   }
 
-  @Timeout(5000)
-  async initDefaultCustomer() {
-    const context = `${UserScheduler.name}.${this.initDefaultCustomer.name}`;
-    this.logger.log(`Initializing default customer...`, context);
+  // KHONG con `initDefaultCustomer` (buoc 2.9, chot 03/11/2026). Ban cu nhan
+  // dien hang sentinel bang `phonenumber` va sinh `id` NGAU NHIEN, nen hai
+  // service dung mot DB dung moi khong the co cung id sentinel - ma 2B2 vua
+  // chuyen toan bo phep nhan dien sang `sharedUserId`. Viec "bao dam co hang
+  // sentinel" chuyen han sang MIGRATION o buoc 2.10, de moi moi truong di mot
+  // duong duy nhat.
+  //
+  // `shared-user` la NGUON GOC cua hang sentinel: `trend` va `terminal` chi
+  // tro vao no. Vi vay bo o day phai di cung lan sua voi hai service kia.
+  //
+  // `initSuperAdmin` phia tren thi O LAI - no khong thuoc 2B2.
 
-    const hasDefaultCustomer = await this.userRepository.exists({
-      where: {
-        phonenumber: 'default-customer',
-      },
-    });
-    if (hasDefaultCustomer) {
-      this.logger.warn(`Default customer already existed...`, context);
-      return;
-    }
-
-    const role = await this.roleRepository.findOne({
-      where: {
-        name: RoleEnum.Customer,
-      },
-    });
-    if (!role) {
-      this.logger.warn(`Role ${RoleEnum.Customer} not found`, context);
-      return;
-    }
-
-    // Create default customer
-    const defaultCustomer = new User();
-    const hashedPass = await bcrypt.hash('default-customer', this.saltOfRounds);
-    Object.assign(defaultCustomer, {
-      role,
-      phonenumber: 'default-customer',
-      firstName: 'Default',
-      lastName: 'Customer',
-      password: hashedPass,
-    } as User);
-    try {
-      await this.userRepository.save(defaultCustomer);
-      this.logger.log(`Default customer created successfuly`, context);
-    } catch (error) {
-      this.logger.error(
-        `Error when creating default customer: ${error.message}`,
-        error.stack,
-        context,
-      );
-    }
-  }
   // Return tomorrow's day-month (DDMM). Birthday greetings are sent one day
   // ahead, so we match users whose birthday is tomorrow. Adding a day to the
   // Date handles month/year rollover (e.g. 31/12 -> 01/01, 28/02 -> 01/03).
