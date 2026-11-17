@@ -1,4 +1,5 @@
 import {
+  Controller,
   Get,
   Param,
   HttpCode,
@@ -12,7 +13,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { PointTransactionService } from './point-transaction.service';
-import { ApiOperation } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiResponseWithType } from 'src/app/app.decorator';
 import {
   AnalysisPointTransactionResponseDto,
@@ -28,13 +29,15 @@ import {
 } from './dto/export-all-point-transaction.dto';
 import { ExportFilename } from 'src/shared/constants/export-filename.constant';
 import { GetAnalyzePointTransactionApi } from './point-transaction.swagger';
-import { RestController } from 'src/shared/decorators/rest-controller.decorator';
+import { CurrentUser } from 'src/user/user.decorator';
+import { CurrentUserDto } from 'src/user/user.dto';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
-@RestController({
-  path: 'point-transaction',
-  tags: ['Point Transaction Resources'],
-})
+// Same as @RestController({ path, tags }), written out like the other wallet
+// controllers (balance, accumulated-point).
+@Controller('point-transaction')
+@ApiTags('Point Transaction Resources')
+@ApiBearerAuth()
 export class PointTransactionController {
   constructor(
     private readonly pointTransactionService: PointTransactionService,
@@ -127,9 +130,14 @@ export class PointTransactionController {
     } as AppResponseDto<AnalysisPointTransactionResponseDto>;
   }
 
+  // Step 6.9 (QD17): the self view. Only the transactions of the user of the
+  // token; the query string filters them (type, dates, k) but names no user.
+  // No role is required (QD15), a customer of terminal-ui reads its own too.
   @Get()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Retrieve the point transactions' })
+  @ApiOperation({
+    summary: 'Retrieve the point transactions of the current user',
+  })
   @ApiResponseWithType({
     status: HttpStatus.OK,
     type: PointTransactionResponseDto,
@@ -138,8 +146,10 @@ export class PointTransactionController {
   async findAll(
     @Query(new ValidationPipe({ whitelist: true, transform: true }))
     req: FindAllPointTransactionDto,
+    @CurrentUser(new ValidationPipe({ validateCustomDecorators: true }))
+    user: CurrentUserDto,
   ) {
-    const result = await this.pointTransactionService.findAll(req);
+    const result = await this.pointTransactionService.findAll(req, user.userId);
     return {
       statusCode: HttpStatus.OK,
       timestamp: new Date().toISOString(),
