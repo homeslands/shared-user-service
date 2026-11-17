@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
 import { AccumulatedPoint } from './accumulated-point.entity';
@@ -60,4 +60,18 @@ export class AccumulatedPointTransactionHistory extends Base {
   )
   @JoinColumn({ name: 'accumulated_point_column' })
   accumulatedPoint: AccumulatedPoint;
+
+  // Idempotency key sent by the calling service ('<service>:<reference>...'),
+  // unique over the whole string, prefix included, compared byte for byte
+  // (step 6.3, migration v4.0.0-04). Ledger row: the key of this
+  // transaction; the unique index refuses a replay.
+  @Index('UQ_ap_history_external_transaction_id', { unique: true })
+  @Column({
+    name: 'external_transaction_id_column',
+    type: 'varchar',
+    length: 191,
+    nullable: true,
+    collation: 'utf8mb4_bin',
+  })
+  externalTransactionId?: string;
 }

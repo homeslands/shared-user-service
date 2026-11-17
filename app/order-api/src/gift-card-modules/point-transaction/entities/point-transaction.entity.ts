@@ -1,7 +1,7 @@
 import { AutoMap } from '@automapper/classes';
 import { Base } from 'src/app/base.entity';
 import { User } from 'src/user/user.entity';
-import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, Index } from 'typeorm';
 
 @Entity('point_transaction_tbl')
 export class PointTransaction extends Base {
@@ -53,4 +53,18 @@ export class PointTransaction extends Base {
   })
   @AutoMap()
   balance: number;
+
+  // Idempotency key sent by the calling service ('<service>:<reference>...'),
+  // unique over the whole string, prefix included, compared byte for byte
+  // (step 6.3, migration v4.0.0-04). Ledger row: the key of this
+  // transaction; the unique index refuses a replay.
+  @Index('UQ_point_transaction_external_transaction_id', { unique: true })
+  @Column({
+    name: 'external_transaction_id_column',
+    type: 'varchar',
+    length: 191,
+    nullable: true,
+    collation: 'utf8mb4_bin',
+  })
+  externalTransactionId?: string;
 }
