@@ -1,4 +1,10 @@
-import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Balance } from './entities/balance.entity';
 import { DataSource, FindOptionsWhere, In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -19,8 +25,10 @@ import { AuthValidation } from 'src/auth/auth.validation';
 import { PointTransaction } from '../point-transaction/entities/point-transaction.entity';
 import { PointTransactionTypeEnum } from '../point-transaction/entities/point-transaction.enum';
 import {
-  BalanceCreditResponse,
   BalanceLookupResponse,
+  BalanceMoveResponse,
+  BalanceTransactionResponse,
+  WALLET_RELEASE_SUFFIX,
 } from './internal/balance-internal.dto';
 
 // Unique index on the idempotency key of the xu ledger and of the balance row
@@ -32,9 +40,10 @@ const isDuplicateKey = (error: any, index?: string): boolean =>
   (error?.code ?? error?.driverError?.code) === 'ER_DUP_ENTRY' &&
   (!index || String(error?.message).includes(index));
 
-// A credit of /internal/balance/credit (step 6.5): the key of the calling
-// service and the soft reference of its object, stored on the ledger row.
-export interface WalletCreditInput {
+// A credit or debit of /internal/balance/* (steps 6.5, 6.6): the key of the
+// calling service and the soft reference of its object, stored on the ledger
+// row.
+export interface WalletMoveInput {
   points: number;
   transactionId: string;
   objectType: string;
@@ -234,46 +243,131 @@ export class BalanceService {
       .map((id) => ({ userId: id, points: points.get(id) ?? 0 }));
   }
 
-  // Add xu, idempotent on input.transactionId.
-  //
-  // One transaction: lock the balance row of the user (SELECT ... FOR UPDATE),
-  // add with an UPDATE on the column (no read-modify-save of the entity), read
-  // the balance after, write the ledger row carrying the key. Two requests
-  // with the same key run one after the other on the row lock; the second one
-  // fails on the unique key of the ledger, rolls back and is answered as a
-  // replay. The balance row keeps the key of the last transaction written to
-  // it (step 6.3).
+  // Add xu, idempotent on input.transactionId (step 6.5).
   async creditByKey(
     user: User,
-    input: WalletCreditInput,
-  ): Promise<BalanceCreditResponse> {
-    const context = `${BalanceService.name}.${this.creditByKey.name}`;
+    input: WalletMoveInput,
+  ): Promise<BalanceMoveResponse> {
+    return this.moveByKey(user, input, PointTransactionTypeEnum.IN);
+  }
 
-    const recorded = await this.findLedgerRowByKey(input.transactionId);
-    if (recorded) return this.replayOfCredit(recorded, user, input);
+  // Take xu in one step, idempotent on input.transactionId (step 6.6, QD9).
+  // Refused with INSUFFICIENT_BALANCE when the balance is short: the balance
+  // never goes below zero, checked on the locked row and again in the WHERE
+  // of the UPDATE.
+  async debitByKey(
+    user: User,
+    input: WalletMoveInput,
+  ): Promise<BalanceMoveResponse> {
+    return this.moveByKey(user, input, PointTransactionTypeEnum.OUT);
+  }
 
-    await this.ensureBalanceRow(user);
+  // Give back a debit after the caller failed to finish what it was for
+  // (trend-api.md 7.4 Z-7), called with the key of the debit. Writes the
+  // credit K:release with the same points and soft reference, idempotent like
+  // any other move: releasing twice gives back once.
+  async releaseByKey(debitKey: string): Promise<BalanceMoveResponse> {
+    const debit = await this.findLedgerRowByKey(debitKey);
+    if (!debit) {
+      throw new NotFoundException(`Transaction ${debitKey} not found`);
+    }
+    if (debit.type !== PointTransactionTypeEnum.OUT) {
+      throw new ConflictException(`Transaction ${debitKey} is not a debit`);
+    }
+    const user = await this.findUserById(debit.userId);
+    if (!user) throw new NotFoundException('User not found');
+    return this.moveByKey(
+      user,
+      {
+        points: Number(debit.points),
+        transactionId: `${debitKey}${WALLET_RELEASE_SUFFIX}`,
+        objectType: debit.objectType,
+        objectId: debit.objectId,
+        objectSlug: debit.objectSlug,
+        desc: `release of ${debitKey}`,
+      },
+      PointTransactionTypeEnum.IN,
+    );
+  }
+
+  // lookup-transaction (QD10): the ledger row written under a key, or null.
+  async findTransactionByKey(
+    key: string,
+  ): Promise<BalanceTransactionResponse | null> {
+    const row = await this.findLedgerRowByKey(key);
+    if (!row) return null;
+    return {
+      transactionId: row.externalTransactionId,
+      userId: row.userId,
+      type: row.type,
+      points: Number(row.points),
+      balance: Number(row.balance),
+      objectType: row.objectType,
+      objectId: row.objectId,
+      objectSlug: row.objectSlug,
+      createdAt: row.createdAt,
+    };
+  }
+
+  // One transaction: lock the balance row of the user (SELECT ... FOR UPDATE),
+  // look the key up under the lock, move the points with an UPDATE on the
+  // column (no read-modify-save of the entity; WHERE refuses a negative
+  // result), read the balance after, write the ledger row carrying the key.
+  // Every move of one user runs one after the other on the row lock, so a
+  // second request with the same key finds the first one's row and is
+  // answered as a replay; the unique key of the ledger is the last fence. The
+  // balance row keeps the key of the last transaction written to it (6.3).
+  private async moveByKey(
+    user: User,
+    input: WalletMoveInput,
+    type: PointTransactionTypeEnum,
+  ): Promise<BalanceMoveResponse> {
+    const context = `${BalanceService.name}.${this.moveByKey.name}`;
+    const key = input.transactionId;
+
+    const recorded = await this.findLedgerRowByKey(key);
+    if (recorded) return this.replayOfMove(recorded, user, input, type);
+
+    if (type === PointTransactionTypeEnum.IN) await this.ensureBalanceRow(user);
+    const delta =
+      type === PointTransactionTypeEnum.IN ? input.points : -input.points;
 
     try {
       const row = await this.dataSource.transaction(async (manager) => {
         const [locked] = await manager.query(
-          'SELECT id_column AS id FROM balance_tbl WHERE user_column = ? AND deleted_at_column IS NULL FOR UPDATE',
+          'SELECT id_column AS id, points_column AS points FROM balance_tbl WHERE user_column = ? AND deleted_at_column IS NULL FOR UPDATE',
           [user.id],
         );
+        // No balance row: nothing to take (a credit created it above).
         if (!locked) {
-          throw new BalanceException(BalanceValidation.BALANCE_NOT_FOUND);
+          throw new BalanceException(
+            type === PointTransactionTypeEnum.OUT
+              ? BalanceValidation.INSUFFICIENT_BALANCE
+              : BalanceValidation.BALANCE_NOT_FOUND,
+          );
         }
-        await manager.query(
-          'UPDATE balance_tbl SET points_column = points_column + ?, external_transaction_id_column = ? WHERE id_column = ?',
-          [input.points, input.transactionId, locked.id],
+        const [already] = await manager.query(
+          'SELECT id_column AS id FROM point_transaction_tbl WHERE external_transaction_id_column = ?',
+          [key],
         );
+        if (already) return null;
+        if (Number(locked.points) + delta < 0) {
+          throw new BalanceException(BalanceValidation.INSUFFICIENT_BALANCE);
+        }
+        const updated = await manager.query(
+          'UPDATE balance_tbl SET points_column = points_column + ?, external_transaction_id_column = ? WHERE id_column = ? AND points_column + ? >= 0',
+          [delta, key, locked.id, delta],
+        );
+        if (updated?.affectedRows !== 1) {
+          throw new BalanceException(BalanceValidation.INSUFFICIENT_BALANCE);
+        }
         const [after] = await manager.query(
           'SELECT points_column AS points FROM balance_tbl WHERE id_column = ?',
           [locked.id],
         );
         return manager.save(
           manager.create(PointTransaction, {
-            type: PointTransactionTypeEnum.IN,
+            type,
             desc: input.desc ?? null,
             objectType: input.objectType,
             objectId: input.objectId,
@@ -283,25 +377,34 @@ export class BalanceService {
             userId: user.id,
             userSlug: user.slug,
             balance: Number(after.points),
-            externalTransactionId: input.transactionId,
+            externalTransactionId: key,
           }),
         );
       });
+      if (!row) {
+        return this.replayOfMove(
+          await this.findLedgerRowByKey(key),
+          user,
+          input,
+          type,
+        );
+      }
       this.logger.log(
-        `Credited ${input.points} xu to user ${user.id}, key ${input.transactionId}, balance ${row.balance}`,
+        `Moved ${delta} xu for user ${user.id}, key ${key}, balance ${row.balance}`,
         context,
       );
-      return this.toCreditResponse(row, false);
+      return this.toMoveResponse(row, false);
     } catch (error) {
+      if (error instanceof BalanceException) throw error;
       if (
         isDuplicateKey(error, LEDGER_KEY_INDEX) ||
         isDuplicateKey(error, BALANCE_KEY_INDEX)
       ) {
-        const winner = await this.findLedgerRowByKey(input.transactionId);
-        if (winner) return this.replayOfCredit(winner, user, input);
+        const winner = await this.findLedgerRowByKey(key);
+        if (winner) return this.replayOfMove(winner, user, input, type);
       }
       this.logger.error(
-        `Error crediting key ${input.transactionId}: ${error.message}`,
+        `Error moving xu with key ${key}: ${error.message}`,
         error.stack,
         context,
       );
@@ -316,29 +419,30 @@ export class BalanceService {
   }
 
   // Same key again: answer with the transaction already written, unless the
-  // key was used for something else (another user, another amount, a debit),
-  // which is a bug of the caller and must not pass as a replay.
-  private replayOfCredit(
+  // key was used for something else (another user, another amount, the other
+  // direction), which is a bug of the caller and must not pass as a replay.
+  private replayOfMove(
     row: PointTransaction,
     user: User,
-    input: WalletCreditInput,
-  ): BalanceCreditResponse {
+    input: WalletMoveInput,
+    type: PointTransactionTypeEnum,
+  ): BalanceMoveResponse {
     if (
       row.userId !== user.id ||
-      row.type !== PointTransactionTypeEnum.IN ||
+      row.type !== type ||
       Number(row.points) !== input.points
     ) {
       throw new ConflictException(
         `transactionId ${input.transactionId} is already recorded for a different transaction`,
       );
     }
-    return this.toCreditResponse(row, true);
+    return this.toMoveResponse(row, true);
   }
 
-  private toCreditResponse(
+  private toMoveResponse(
     row: PointTransaction,
     replayed: boolean,
-  ): BalanceCreditResponse {
+  ): BalanceMoveResponse {
     return {
       transactionId: row.externalTransactionId,
       userId: row.userId,

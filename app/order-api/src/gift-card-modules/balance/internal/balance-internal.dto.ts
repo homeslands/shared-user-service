@@ -78,6 +78,30 @@ export class CreditBalanceRequestDto {
   desc?: string;
 }
 
+// Suffix of the ledger row a release writes: release of key K is the
+// transaction K:release, so a debit key leaves room for it (191 - 8 = 183).
+export const WALLET_RELEASE_SUFFIX = ':release';
+export const WALLET_DEBIT_KEY_MAX = 191 - WALLET_RELEASE_SUFFIX.length;
+
+// Debit (step 6.6, QD9: one step, no reserve / confirm on xu). Same body as a
+// credit; the key is shorter so that its release fits the key column.
+export class DebitBalanceRequestDto extends CreditBalanceRequestDto {
+  @MaxLength(WALLET_DEBIT_KEY_MAX, {
+    message: `transactionId of a debit is at most ${WALLET_DEBIT_KEY_MAX} characters`,
+  })
+  transactionId: string;
+}
+
+// release (the key of the debit to give back) and lookup-transaction.
+export class TransactionKeyRequestDto {
+  @Matches(WALLET_TRANSACTION_ID_PATTERN, {
+    message: 'transactionId must look like <service>:<reference>',
+  })
+  @MaxLength(191, { message: 'transactionId is at most 191 characters' })
+  @IsString({ message: 'transactionId must be a string' })
+  transactionId: string;
+}
+
 // Response of lookup / batch-lookup: points is the balance (xu) of the user,
 // 0 when the user has no balance row yet.
 export interface BalanceLookupResponse {
@@ -85,15 +109,29 @@ export interface BalanceLookupResponse {
   points: number;
 }
 
-// Response of credit. balance is the balance right after this transaction
-// (the caller no longer reads it back). A replay of the same transactionId
-// returns the same transaction and balance with replayed = true and changes
-// nothing.
-export interface BalanceCreditResponse {
+// Response of credit / debit / release: the ledger row written (its key,
+// the points moved) and balance, the balance right after it (the caller no
+// longer reads it back). A replay of the same key returns the same
+// transaction and balance with replayed = true and changes nothing.
+export interface BalanceMoveResponse {
   transactionId: string;
   userId: string;
   points: number;
   balance: number;
   replayed: boolean;
+  createdAt: Date;
+}
+
+// Response of lookup-transaction (QD10): a ledger row of the calling
+// service, found by its key. type is 'in' or 'out'.
+export interface BalanceTransactionResponse {
+  transactionId: string;
+  userId: string;
+  type: string;
+  points: number;
+  balance: number;
+  objectType: string;
+  objectId: string;
+  objectSlug: string;
   createdAt: Date;
 }
