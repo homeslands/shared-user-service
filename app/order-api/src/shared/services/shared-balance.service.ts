@@ -9,7 +9,7 @@ import { BalanceValidation } from 'src/gift-card-modules/balance/balance.validat
 import { User } from 'src/user/user.entity';
 import { AuthException } from 'src/auth/auth.exception';
 import { AuthValidation } from 'src/auth/auth.validation';
-import { FindByFieldDto } from 'src/gift-card-modules/balance/dto/find-by-field.dto';
+import { BalanceLookup } from 'src/gift-card-modules/balance/balance-lookup.interface';
 
 @Injectable()
 export class SharedBalanceService {
@@ -100,7 +100,7 @@ export class SharedBalanceService {
     );
   }
 
-  async findOneByField(payload: FindByFieldDto) {
+  async findOneByField(payload: BalanceLookup) {
     const context = `${SharedBalanceService.name}.${this.findOneByField.name}`;
     this.logger.debug(
       `Finding balance by field: ${JSON.stringify(payload)}`,

@@ -461,20 +461,20 @@ export class PointTransactionService {
     // return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
   }
 
+  // userId (step 6.9): the owner of the transactions, from the token of the
+  // self view; undefined reads every user. It is the base of the user filter
+  // and is spread into both branches of the k search below, so k narrows the
+  // owner's rows and can never replace the filter (the mono copy assigned the
+  // k branches over the user slug filter).
   private buildWhereOptions(
     req: FindAllPointTransactionDto,
+    userId?: string,
   ): FindOptionsWhere<PointTransaction> {
-    const { userSlug } = req;
-
     const whereOpts: FindOptionsWhere<PointTransaction> = {};
 
-    let userWhere: FindOptionsWhere<User> | FindOptionsWhere<User>[] = {};
-
-    if (userSlug) {
-      whereOpts.user = {
-        slug: userSlug,
-      };
-    }
+    let userWhere: FindOptionsWhere<User> | FindOptionsWhere<User>[] = userId
+      ? { id: userId }
+      : {};
 
     if (req.type) {
       whereOpts.type = req.type;
@@ -532,6 +532,7 @@ export class PointTransactionService {
   // Transaction counts bucketed by time type, using the same filters as findAll
   private async getStatistics(
     req: FindAllPointTransactionDto,
+    userId?: string,
   ): Promise<PointTransactionStatisticItemDto[]> {
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
@@ -545,8 +546,8 @@ export class PointTransactionService {
       .addGroupBy('pt.type_column')
       .orderBy(groupByExpr, 'ASC');
 
-    if (req.userSlug) {
-      qb.andWhere('user.slug_column = :userSlug', { userSlug: req.userSlug });
+    if (userId) {
+      qb.andWhere('user.id_column = :userId', { userId });
     }
 
     if (req.type) {
@@ -588,6 +589,7 @@ export class PointTransactionService {
   // Points earned/spent and transaction counts bucketed by time, for the analysis endpoint
   private async getAnalysisStatistics(
     req: FindAllPointTransactionDto,
+    userId?: string,
   ): Promise<AnalysisPointTransactionStatisticItemDto[]> {
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
@@ -611,8 +613,8 @@ export class PointTransactionService {
       .groupBy(groupByExpr)
       .orderBy(groupByExpr, 'ASC');
 
-    if (req.userSlug) {
-      qb.andWhere('user.slug_column = :userSlug', { userSlug: req.userSlug });
+    if (userId) {
+      qb.andWhere('user.id_column = :userId', { userId });
     }
 
     if (req.type) {
@@ -653,17 +655,20 @@ export class PointTransactionService {
     }));
   }
 
-  async findAll(req: FindAllPointTransactionDto) {
+  // Step 6.9 (QD17): GET /point-transaction, the self view. userId is the one
+  // of the token and is required: the list and the statistics only ever read
+  // the transactions of that user.
+  async findAll(req: FindAllPointTransactionDto, userId: string) {
     const context = `${PointTransactionService.name}.${this.findAll.name}`;
     this.logger.log(
-      `Find all point transaction: ${JSON.stringify(req)}`,
+      `Find all point transaction of user ${userId}: ${JSON.stringify(req)}`,
       context,
     );
 
     const { page, size, sort } = req;
 
     const whereOpts: FindOptionsWhere<PointTransaction> =
-      this.buildWhereOptions(req);
+      this.buildWhereOptions(req, userId);
 
     const sortOpts = createSortOptions<PointTransaction>(sort);
 
@@ -675,7 +680,7 @@ export class PointTransactionService {
         skip: (page - 1) * size,
         relations: ['user'],
       }),
-      this.getStatistics(req),
+      this.getStatistics(req, userId),
     ]);
     const cardsResponse = this.mapper.mapArray(
       pts,

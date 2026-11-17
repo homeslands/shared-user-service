@@ -8,7 +8,7 @@ import {
 import { Balance } from './entities/balance.entity';
 import { DataSource, FindOptionsWhere, In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindByFieldDto } from './dto/find-by-field.dto';
+import { BalanceLookup } from './balance-lookup.interface';
 import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
 import {
@@ -67,7 +67,7 @@ export class BalanceService {
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     private transactionService: TransactionManagerService,
-  ) { }
+  ) {}
 
   async maxBalance(payload: any) {
     JSON.stringify(payload);
@@ -83,7 +83,19 @@ export class BalanceService {
     return res;
   }
 
-  async findOneByField(payload: FindByFieldDto) {
+  // Step 6.9 (QD17): GET /balance, the self view. The user is the one of the
+  // token, never a slug sent by the client. Same answer as findOneByField.
+  async findOneByUserId(userId: string) {
+    const balance = await this.balanceRepository.findOne({
+      where: { user: { id: userId } },
+    });
+    if (!balance)
+      throw new BalanceException(BalanceValidation.BALANCE_NOT_FOUND);
+
+    return this.mapper.map(balance, Balance, BalanceResponseDto);
+  }
+
+  async findOneByField(payload: BalanceLookup) {
     const context = `${BalanceService.name}.${this.findOneByField.name}`;
     this.logger.debug(
       `Finding balance by field: ${JSON.stringify(payload)}`,

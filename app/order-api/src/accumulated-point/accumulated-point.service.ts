@@ -169,21 +169,22 @@ export class AccumulatedPointService {
   }
 
   /**
-   * Get points history of user
+   * Get points history of user. Step 6.9 (QD17): GET /accumulated-point/history,
+   * the self view, keyed by the user id of the token.
    */
   async getPointsHistory(
-    userSlug: string,
+    userId: string,
     query: GetPointHistoryQueryDto,
   ): Promise<AppPaginatedResponseDto<PointTransactionHistoryResponseDto>> {
     const context = `${AccumulatedPointService.name}.${this.getPointsHistory.name}`;
 
     const user = await this.userRepository.findOne({
-      where: { slug: userSlug },
+      where: { id: userId },
       relations: ['accumulatedPoint', 'role'],
     });
 
     if (!user) {
-      this.logger.error(`User not found: ${userSlug}`, context);
+      this.logger.error(`User not found: ${userId}`, context);
       throw new AccumulatedPointException(
         AccumulatedPointValidation.USER_NOT_FOUND,
       );
@@ -191,7 +192,7 @@ export class AccumulatedPointService {
 
     // Check if user is customer
     if (!isCustomer(user.role?.name)) {
-      this.logger.log(`User is not customer: ${userSlug}`, context);
+      this.logger.log(`User is not customer: ${userId}`, context);
       throw new AccumulatedPointException(
         AccumulatedPointValidation.CUSTOMER_ONLY_FEATURE,
       );
@@ -200,7 +201,7 @@ export class AccumulatedPointService {
     // Check if user is default customer
     if (isDefaultCustomer(user.phonenumber)) {
       this.logger.warn(
-        `Default customer cannot view points history: ${userSlug}`,
+        `Default customer cannot view points history: ${userId}`,
         context,
       );
       throw new AccumulatedPointException(
@@ -287,20 +288,21 @@ export class AccumulatedPointService {
   }
 
   /**
-   * Get total points of user
+   * Get total points of user. Step 6.9 (QD17): GET /accumulated-point/points,
+   * the self view, keyed by the user id of the token.
    */
-  async getTotalPointsByUserSlug(
-    userSlug: string,
+  async getTotalPointsOfUser(
+    userId: string,
   ): Promise<AccumulatedPointResponseDto> {
-    const context = `${AccumulatedPointService.name}.${this.getTotalPointsByUserSlug.name}`;
+    const context = `${AccumulatedPointService.name}.${this.getTotalPointsOfUser.name}`;
 
     const user = await this.userRepository.findOne({
-      where: { slug: userSlug },
+      where: { id: userId },
       relations: ['accumulatedPoint', 'role'],
     });
 
     if (!user) {
-      this.logger.error(`User not found: ${userSlug}`, context);
+      this.logger.error(`User not found: ${userId}`, context);
       throw new AccumulatedPointException(
         AccumulatedPointValidation.USER_NOT_FOUND,
       );
@@ -308,7 +310,7 @@ export class AccumulatedPointService {
 
     // Check if user is customer
     if (!isCustomer(user.role?.name)) {
-      this.logger.log(`User is not customer: ${userSlug}`, context);
+      this.logger.log(`User is not customer: ${userId}`, context);
       throw new AccumulatedPointException(
         AccumulatedPointValidation.CUSTOMER_ONLY_FEATURE,
       );
@@ -317,7 +319,7 @@ export class AccumulatedPointService {
     // Check if user is default customer
     if (isDefaultCustomer(user.phonenumber)) {
       this.logger.warn(
-        `Default customer cannot accumulate points: ${userSlug}`,
+        `Default customer cannot accumulate points: ${userId}`,
         context,
       );
       throw new AccumulatedPointException(
@@ -327,9 +329,14 @@ export class AccumulatedPointService {
 
     let accumulatedPoint = user.accumulatedPoint;
 
-    // Create new if not exists
+    // Create new if not exists, as the mono copy does, but with the creator
+    // of step 6.7: it locks the user row, so a first /internal add running at
+    // the same time shares the row, and it leaves updated_at alone.
     if (!accumulatedPoint) {
-      accumulatedPoint = await this.createAccumulatedPointForUser(user);
+      const id = await this.pointsRowIdOf(user.id, true);
+      accumulatedPoint = await this.accumulatedPointRepository.findOne({
+        where: { id },
+      });
     }
 
     return this.mapper.map(

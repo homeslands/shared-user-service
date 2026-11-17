@@ -10,9 +10,13 @@ import {
 } from '@nestjs/common';
 import { BalanceService } from './balance.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { FindByFieldDto } from './dto/find-by-field.dto';
 import { AppResponseDto } from 'src/app/app.dto';
-import { BalanceResponseDto, MaxBalanceResponseDto } from './dto/balance-response.dto';
+import { CurrentUser } from 'src/user/user.decorator';
+import { CurrentUserDto } from 'src/user/user.dto';
+import {
+  BalanceResponseDto,
+  MaxBalanceResponseDto,
+} from './dto/balance-response.dto';
 import { ApiResponseWithType } from 'src/app/app.decorator';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
@@ -24,21 +28,26 @@ export class BalanceController {
     private readonly balanceService: BalanceService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
-  ) { }
+  ) {}
 
+  // Step 6.9 (QD17): the self view. The balance read is the one of the user
+  // of the token; the query string names no one (it used to take a user slug,
+  // which let anyone logged in read anyone's balance). No role is required:
+  // the role of shared-user is not the one of the calling service (QD15), and
+  // a customer logged in from terminal-ui reads its own balance here too.
   @Get()
-  @ApiOperation({ summary: 'Get balance by field' })
+  @ApiOperation({ summary: 'Get the balance of the current user' })
   @ApiResponseWithType({
     status: HttpStatus.OK,
     description: 'The balance was retrieved successfully',
     type: BalanceResponseDto,
   })
   @HttpCode(HttpStatus.OK)
-  async findByField(
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
-    payload: FindByFieldDto,
+  async findMine(
+    @CurrentUser(new ValidationPipe({ validateCustomDecorators: true }))
+    user: CurrentUserDto,
   ) {
-    const result = await this.balanceService.findOneByField(payload);
+    const result = await this.balanceService.findOneByUserId(user.userId);
     return {
       message: 'The balance was retrieved successfully',
       statusCode: HttpStatus.OK,
@@ -47,7 +56,7 @@ export class BalanceController {
     } as AppResponseDto<BalanceResponseDto>;
   }
 
-  @Get("/analysis")
+  @Get('/analysis')
   @ApiOperation({ summary: 'Analyze balance in the system' })
   @ApiResponseWithType({
     status: HttpStatus.OK,
@@ -59,7 +68,10 @@ export class BalanceController {
     payload: any,
   ) {
     const context = `${BalanceController.name}.${this.maxBalance.name}`;
-    this.logger.log(`REST request to analyze balance: ${JSON.stringify(payload)}`, context);
+    this.logger.log(
+      `REST request to analyze balance: ${JSON.stringify(payload)}`,
+      context,
+    );
 
     const result = await this.balanceService.maxBalance(payload);
     return {
