@@ -1,7 +1,6 @@
 import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
-import { Order } from 'src/order/order.entity';
 import { AccumulatedPoint } from './accumulated-point.entity';
 
 @Entity('accumulated_point_transaction_history_tbl')
@@ -35,11 +34,23 @@ export class AccumulatedPointTransactionHistory extends Base {
   })
   status: string;
 
-  // Many to one with order
-  @AutoMap(() => Order)
-  @ManyToOne(() => Order, (order) => order.accumulatedPointTransactionHistories)
-  @JoinColumn({ name: 'order_column' })
-  order: Order;
+  // Soft reference to the object that produced this row (step 6.2), same
+  // pattern as point_transaction_tbl. The order belongs to the calling service
+  // (trend, terminal), so there is no foreign key across that boundary:
+  // objectType 'ORDER', objectId = order id in that service, objectSlug =
+  // '<service>:<orderSlug>'. The old foreign key column is kept as
+  // _deprecated_order_column until stage 10 and is not mapped.
+  @AutoMap()
+  @Column({ name: 'object_id_column', nullable: true })
+  objectId?: string;
+
+  @AutoMap()
+  @Column({ name: 'object_type_column', nullable: true })
+  objectType?: string;
+
+  @AutoMap()
+  @Column({ name: 'object_slug_column', nullable: true })
+  objectSlug?: string;
 
   // Many to one with accumulated point
   @AutoMap(() => AccumulatedPoint)
