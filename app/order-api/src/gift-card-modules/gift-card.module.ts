@@ -8,6 +8,7 @@ import { FileModule } from 'src/file/file.module';
 import { DbModule } from 'src/db/db.module';
 import { BalanceController } from './balance/balance.controller';
 import { BalanceInternalController } from './balance/internal/balance-internal.controller';
+import { PointTransactionInternalController } from './point-transaction/internal/point-transaction-internal.controller';
 import { BalanceService } from './balance/balance.service';
 import { CardOrderController } from './card-order/card-order.controller';
 import { GiftCardController } from './gift-card/gift-card.controller';
@@ -62,6 +63,7 @@ const controllers = [
   CardController,
   BalanceController,
   BalanceInternalController,
+  PointTransactionInternalController,
   CardOrderController,
   GiftCardController,
   ReceipientController,

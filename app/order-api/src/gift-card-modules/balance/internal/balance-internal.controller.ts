@@ -39,8 +39,8 @@ const serviceOfKey = (transactionId: string): string =>
 // '<service>:<reference>[:<op>[:<seq>]]'. This layer resolves the User once and
 // hands the entity to BalanceService.
 //
-// Step 6.6 adds debit / release / lookup-transaction; analysis (QD17, the
-// "view on behalf" group) comes with step 6.10. There is no reserve / confirm
+// Step 6.6 adds debit / release / lookup-transaction; step 6.10 analysis (QD17,
+// the "view on behalf" group). There is no reserve / confirm
 // on xu (QD9): the only xu spending path is one step.
 @UseGuards(InternalApiGuard)
 @Controller('internal/balance')
@@ -167,6 +167,24 @@ export class BalanceInternalController {
         : null;
     if (!transaction) throw new NotFoundException('Transaction not found');
     return transaction;
+  }
+
+  // Step 6.10 (QD17): max and min balance, the old client /balance/analysis
+  // (the coin policy screen of trend), now behind the role check of the
+  // calling service. A balance belongs to a person, not to a service (one
+  // wallet per user, shared-user.md 6A), so unlike the point transaction views
+  // there is no per-service subset (QD-T5): the answer covers every wallet.
+  // x-internal-service is required as on the other views on behalf of
+  // someone; the guard logs it with the request.
+  @Public()
+  @Post('analysis')
+  async analysis(@Req() request: InternalRequest) {
+    if (!request.internalService) {
+      throw new BadRequestException(
+        'x-internal-service is required to analyze balances',
+      );
+    }
+    return this.balanceService.maxBalance({});
   }
 
   private assertKeyOfCaller(

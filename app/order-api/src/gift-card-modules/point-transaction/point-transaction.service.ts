@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PointTransaction } from './entities/point-transaction.entity';
 import {
@@ -53,6 +53,37 @@ import { ExportFilename } from 'src/shared/constants/export-filename.constant';
 import { CurrencyUtil } from 'src/shared/utils/currency.util';
 import { Campaign } from 'src/campaign/entity/campaign.entity';
 
+// Which transactions a read covers (steps 6.9 and 6.10, QD17 + QD-T5).
+// - userId: the transactions of that user, whatever service wrote them. The
+//   self view always sets it, from the token.
+// - service: the transactions written under that service's keys
+//   ('<service>:...', the step 6.3 key). The view on behalf of a service of
+//   the whole system sets it, from x-internal-service: the soft reference of a
+//   row (objectSlug, objectType) only means something to the service that
+//   wrote it. A row without key (mono copy, before the step 6.12 backfill
+//   gives it one) belongs to no service and only shows in a per-user read.
+// Neither: every transaction (only the client analysis route kept until 6.10
+// did that).
+export interface PointTransactionScope {
+  userId?: string;
+  service?: string;
+}
+
+// The service of a row: the prefix of its key, null for a row without key.
+export const serviceOfTransactionKey = (
+  key: string | null | undefined,
+): string | null => (key && key.includes(':') ? key.split(':')[0] : null);
+
+// LIKE pattern of the keys of a service: the service name is a header value,
+// so its wildcards are escaped (MySQL's default escape character).
+const keysOfService = (service: string): string =>
+  `${service.replace(/[\\%_]/g, '\\$&')}:%`;
+
+// Step 6.10: the most rows /internal/point-transactions/export answers with.
+// Above it the caller is told to narrow the filter instead of getting a
+// truncated file (the old client route built the whole file in one go).
+export const POINT_TRANSACTION_EXPORT_MAX_ROWS = 20000;
+
 @Injectable()
 export class PointTransactionService {
   constructor(
@@ -77,11 +108,15 @@ export class PointTransactionService {
     private readonly sharedExportFileService: SharedExportFileService,
   ) {}
 
-  async analyze(req: FindAllPointTransactionDto) {
+  // Step 6.10: POST /internal/point-transactions/analysis (QD-T5 scope).
+  async analyze(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope = {},
+  ) {
     const { sort } = req;
 
     const whereOpts: FindOptionsWhere<PointTransaction> =
-      this.buildWhereOptions(req);
+      this.buildWhereOptions(req, scope);
 
     const sortOpts = createSortOptions<PointTransaction>(sort);
 
@@ -92,7 +127,7 @@ export class PointTransactionService {
         relations: ['user'],
         select: ['points', 'type'],
       }),
-      this.getAnalysisStatistics(req),
+      this.getAnalysisStatistics(req, scope),
     ]);
 
     const totalEarned = pts
@@ -461,16 +496,20 @@ export class PointTransactionService {
     // return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
   }
 
-  // userId (step 6.9): the owner of the transactions, from the token of the
-  // self view; undefined reads every user. It is the base of the user filter
-  // and is spread into both branches of the k search below, so k narrows the
-  // owner's rows and can never replace the filter (the mono copy assigned the
-  // k branches over the user slug filter).
+  // scope.userId (step 6.9) is the base of the user filter and is spread into
+  // both branches of the k search below, so k narrows the owner's rows and can
+  // never replace the filter (the mono copy assigned the k branches over the
+  // user slug filter). scope.service (step 6.10) filters on the key prefix.
   private buildWhereOptions(
     req: FindAllPointTransactionDto,
-    userId?: string,
+    scope: PointTransactionScope = {},
   ): FindOptionsWhere<PointTransaction> {
+    const { userId, service } = scope;
     const whereOpts: FindOptionsWhere<PointTransaction> = {};
+
+    if (service) {
+      whereOpts.externalTransactionId = Like(keysOfService(service));
+    }
 
     let userWhere: FindOptionsWhere<User> | FindOptionsWhere<User>[] = userId
       ? { id: userId }
@@ -532,8 +571,9 @@ export class PointTransactionService {
   // Transaction counts bucketed by time type, using the same filters as findAll
   private async getStatistics(
     req: FindAllPointTransactionDto,
-    userId?: string,
+    scope: PointTransactionScope = {},
   ): Promise<PointTransactionStatisticItemDto[]> {
+    const { userId, service } = scope;
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
     const qb = this.ptRepository
@@ -548,6 +588,12 @@ export class PointTransactionService {
 
     if (userId) {
       qb.andWhere('user.id_column = :userId', { userId });
+    }
+
+    if (service) {
+      qb.andWhere('pt.external_transaction_id_column LIKE :keys', {
+        keys: keysOfService(service),
+      });
     }
 
     if (req.type) {
@@ -589,8 +635,9 @@ export class PointTransactionService {
   // Points earned/spent and transaction counts bucketed by time, for the analysis endpoint
   private async getAnalysisStatistics(
     req: FindAllPointTransactionDto,
-    userId?: string,
+    scope: PointTransactionScope = {},
   ): Promise<AnalysisPointTransactionStatisticItemDto[]> {
+    const { userId, service } = scope;
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
     const qb = this.ptRepository
@@ -615,6 +662,12 @@ export class PointTransactionService {
 
     if (userId) {
       qb.andWhere('user.id_column = :userId', { userId });
+    }
+
+    if (service) {
+      qb.andWhere('pt.external_transaction_id_column LIKE :keys', {
+        keys: keysOfService(service),
+      });
     }
 
     if (req.type) {
@@ -659,16 +712,35 @@ export class PointTransactionService {
   // of the token and is required: the list and the statistics only ever read
   // the transactions of that user.
   async findAll(req: FindAllPointTransactionDto, userId: string) {
-    const context = `${PointTransactionService.name}.${this.findAll.name}`;
+    return this.findPage(req, { userId });
+  }
+
+  // Step 6.10 (QD17 + QD-T5): POST /internal/point-transactions/query, the
+  // view on behalf of a calling service, which checked the role before. The
+  // same page as the self view, and each row also carries the service that
+  // wrote it, so the caller only opens the soft reference of its own rows.
+  async findPageForService(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope,
+  ) {
+    return this.findPage(req, scope, true);
+  }
+
+  private async findPage(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope,
+    withService = false,
+  ) {
+    const context = `${PointTransactionService.name}.${this.findPage.name}`;
     this.logger.log(
-      `Find all point transaction of user ${userId}: ${JSON.stringify(req)}`,
+      `Find point transactions of ${JSON.stringify(scope)}: ${JSON.stringify(req)}`,
       context,
     );
 
     const { page, size, sort } = req;
 
     const whereOpts: FindOptionsWhere<PointTransaction> =
-      this.buildWhereOptions(req, userId);
+      this.buildWhereOptions(req, scope);
 
     const sortOpts = createSortOptions<PointTransaction>(sort);
 
@@ -680,13 +752,19 @@ export class PointTransactionService {
         skip: (page - 1) * size,
         relations: ['user'],
       }),
-      this.getStatistics(req, userId),
+      this.getStatistics(req, scope),
     ]);
-    const cardsResponse = this.mapper.mapArray(
+    const mapped = this.mapper.mapArray(
       pts,
       PointTransaction,
       PointTransactionResponseDto,
     );
+    const cardsResponse = withService
+      ? mapped.map((item, i) => ({
+          ...item,
+          service: serviceOfTransactionKey(pts[i].externalTransactionId),
+        }))
+      : mapped;
     // Calculate total pages
     const totalPages = Math.ceil(total / size);
     // Determine hasNext and hasPrevious
@@ -705,6 +783,61 @@ export class PointTransactionService {
     } as AppPaginatedResponseDto<PointTransactionResponseDto> & {
       statistics: PointTransactionStatisticItemDto[];
     };
+  }
+
+  // Step 6.10: POST /internal/point-transactions/export. The rows of the old
+  // client exports (/export of a user, /export/system, /:slug/export of one
+  // transaction), as data: the calling service builds its spreadsheet or its
+  // receipt, as only it can resolve the soft reference (order, gift card,
+  // campaign) of its own rows. Oldest first, like the old spreadsheets. Above
+  // POINT_TRANSACTION_EXPORT_MAX_ROWS the request is refused, not truncated.
+  async exportRows(
+    filter: {
+      slug?: string;
+      type?: string;
+      fromDate?: Date;
+      toDate?: Date;
+    },
+    scope: PointTransactionScope,
+  ) {
+    const context = `${PointTransactionService.name}.${this.exportRows.name}`;
+    const where: FindOptionsWhere<PointTransaction> = {};
+    if (scope.userId) where.user = { id: scope.userId };
+    if (scope.service) {
+      where.externalTransactionId = Like(keysOfService(scope.service));
+    }
+    if (filter.slug) where.slug = filter.slug;
+    if (filter.type) where.type = filter.type;
+    if (filter.fromDate && !filter.toDate) {
+      where.createdAt = MoreThan(filter.fromDate);
+    }
+    if (filter.fromDate && filter.toDate) {
+      where.createdAt = Between(filter.fromDate, filter.toDate);
+    }
+
+    const total = await this.ptRepository.count({ where });
+    this.logger.log(
+      `Export point transactions of ${JSON.stringify(scope)} ${JSON.stringify(filter)}: ${total} row(s)`,
+      context,
+    );
+    if (total > POINT_TRANSACTION_EXPORT_MAX_ROWS) {
+      throw new BadRequestException(
+        `${total} point transactions match, more than the ${POINT_TRANSACTION_EXPORT_MAX_ROWS} an export answers with: narrow the filter (dates, type, user)`,
+      );
+    }
+
+    const pts = await this.ptRepository.find({
+      where,
+      relations: ['user'],
+      order: { createdAt: 'ASC' },
+    });
+    const items = this.mapper
+      .mapArray(pts, PointTransaction, PointTransactionResponseDto)
+      .map((item, i) => ({
+        ...item,
+        service: serviceOfTransactionKey(pts[i].externalTransactionId),
+      }));
+    return { items, total };
   }
 
   async findOne(slug: string) {
