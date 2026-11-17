@@ -1013,7 +1013,7 @@ export class AccumulatedPointService {
   // - for the same object (objectType + objectId): replaced, its points given
   //   back (K:cancel) before the new hold, in the same transaction;
   // - for another object, past its expiresAt: released the same way (what
-  //   the step 6.8 job would do);
+  //   the step 6.8 job does, without waiting for its next run);
   // - for another object, still running: POINTS_ALREADY_RESERVED_FOR_OTHER_ORDER.
   // A reservation in another service does not count (QD-T3): its points are
   // already out of the total.
@@ -1144,6 +1144,68 @@ export class AccumulatedPointService {
       if (await this.isKeyRecorded(manager, key)) return null;
       return this.releaseReservation(manager, points, reservation);
     });
+  }
+
+  // Step 6.8 (QD11): release the open reservations whose expiresAt is at or
+  // before expiresAtBefore, of every calling service (no prefix filter: this
+  // job replaces the balance schedulers of all consumers). Rows without
+  // expiresAt (mono copy, backfill) never expire. Candidates come from the
+  // unique index of open reservations (step 6.4), so the query reads open
+  // reservations only, not the whole history.
+  //
+  // Each reservation is released in its own transaction that locks the points
+  // row first and checks again under that lock that the reservation is still
+  // open and expired: a confirm or cancel that got the lock first wins, and
+  // two replicas running the job release a reservation once. The release is
+  // the one of cancel-reservation (K:cancel, points given back), so a later
+  // cancel-reservation with K is a replay and a later confirm a 409. Returns
+  // the keys released (the row id for a reservation without key).
+  async releaseExpiredReservations(
+    expiresAtBefore: Date,
+    limit = 200,
+  ): Promise<string[]> {
+    const context = `${AccumulatedPointService.name}.${this.releaseExpiredReservations.name}`;
+    const due: KeyedHistoryRow[] = (
+      await this.dataSource.query(
+        `SELECT ${HISTORY_COLUMNS} WHERE h.active_reservation_key_column IS NOT NULL AND h.expires_at_column <= ? ORDER BY h.expires_at_column LIMIT ?`,
+        [expiresAtBefore, limit],
+      )
+    ).map(toKeyedHistoryRow);
+
+    const released: string[] = [];
+    for (const reservation of due) {
+      const name = reservation.externalTransactionId ?? reservation.id;
+      try {
+        const done = await this.dataSource.transaction(async (manager) => {
+          const points = await this.lockPoints(
+            manager,
+            reservation.accumulatedPointId,
+          );
+          const [still] = await manager.query(
+            'SELECT id_column AS id FROM accumulated_point_transaction_history_tbl WHERE id_column = ? AND type_column = ? AND status_column = ? AND deleted_at_column IS NULL AND expires_at_column <= ?',
+            [
+              reservation.id,
+              AccumulatedPointTransactionType.RESERVE,
+              AccumulatedPointTransactionStatus.PENDING,
+              expiresAtBefore,
+            ],
+          );
+          if (!still) return false;
+          await this.releaseReservation(manager, points, reservation);
+          return true;
+        });
+        if (done) released.push(name);
+      } catch (error) {
+        // One reservation that cannot be released must not stop the others;
+        // it is tried again on the next run.
+        this.logger.error(
+          `Error releasing expired reservation ${name}: ${error.message}`,
+          error.stack,
+          context,
+        );
+      }
+    }
+    return released;
   }
 
   // Close an open reservation and give its points back, writing the refund
