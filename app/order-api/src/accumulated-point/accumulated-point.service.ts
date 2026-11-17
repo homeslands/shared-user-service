@@ -13,6 +13,8 @@ import { AccumulatedPointTransactionHistory } from './entities/accumulated-point
 import {
   AccumulatedPointTransactionType,
   AccumulatedPointTransactionStatus,
+  ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+  orderSlugOfRef,
 } from './accumulated-point.constants';
 import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
@@ -38,7 +40,7 @@ import { Order } from 'src/order/order.entity';
 import { ConfigService } from '@nestjs/config';
 import { SystemConfigService } from 'src/system-config/system-config.service';
 import { SystemConfigKey } from 'src/system-config/system-config.constant';
-import { OrderStatus } from 'src/order/order.constants';
+import { OrderStatus, legacyTrendOrderRef } from 'src/order/order.constants';
 import { OrderException } from 'src/order/order.exception';
 import { OrderValidation } from 'src/order/order.validation';
 
@@ -145,7 +147,6 @@ export class AccumulatedPointService {
 
     // Construct find many options
     const findManyOptions: FindManyOptions = {
-      relations: ['order'],
       where: whereOptions,
       order: { date: 'DESC' },
     };
@@ -174,7 +175,7 @@ export class AccumulatedPointService {
         AccumulatedPointTransactionHistory,
         PointTransactionHistoryResponseDto,
       ),
-      orderSlug: transaction.order?.slug,
+      orderSlug: orderSlugOfRef(transaction.objectSlug),
     }));
 
     return {
@@ -413,17 +414,17 @@ export class AccumulatedPointService {
     const existingReservationForOtherOrder =
       await this.transactionHistoryRepository.findOne({
         where: {
-          order: { id: Not(order.id) },
+          objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+          objectId: Not(order.id),
           accumulatedPoint: { id: accumulatedPoint.id },
           type: AccumulatedPointTransactionType.RESERVE,
           status: AccumulatedPointTransactionStatus.PENDING,
         },
-        relations: ['order'],
       });
 
     if (existingReservationForOtherOrder) {
       this.logger.warn(
-        `Points already reserved for other order: ${existingReservationForOtherOrder.order.slug}`,
+        `Points already reserved for other order: ${existingReservationForOtherOrder.objectSlug}`,
         context,
       );
       throw new AccumulatedPointException(
@@ -436,12 +437,12 @@ export class AccumulatedPointService {
     const existingReservationForThisOrder =
       await this.transactionHistoryRepository.findOne({
         where: {
-          order: { id: order.id },
+          objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+          objectId: order.id,
           accumulatedPoint: { id: accumulatedPoint.id },
           type: AccumulatedPointTransactionType.RESERVE,
           status: AccumulatedPointTransactionStatus.PENDING,
         },
-        relations: ['order'],
       });
 
     if (existingReservationForThisOrder) {
@@ -524,7 +525,8 @@ export class AccumulatedPointService {
     // Find reservation pending for this order
     const reservation = await this.transactionHistoryRepository.findOne({
       where: {
-        order: { id: orderId },
+        objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+        objectId: orderId,
         type: AccumulatedPointTransactionType.RESERVE,
         status: AccumulatedPointTransactionStatus.PENDING,
       },
@@ -612,7 +614,8 @@ export class AccumulatedPointService {
 
     const reservation = await this.transactionHistoryRepository.findOne({
       where: {
-        order: { id: orderId },
+        objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+        objectId: orderId,
         type: AccumulatedPointTransactionType.RESERVE,
         status: AccumulatedPointTransactionStatus.PENDING,
       },
@@ -737,9 +740,14 @@ export class AccumulatedPointService {
 
       const pointsPercentage = await this.getAccumulatedPointsPercentage();
 
+      // Soft reference instead of the order relation (step 6.2): same values
+      // as the backfill of migration v4.0.0-03, empty when the order is gone,
+      // as the foreign key column used to be.
       const transaction = this.transactionHistoryRepository.create({
         accumulatedPoint: data.accumulatedPoint,
-        order,
+        objectType: order ? ACCUMULATED_POINT_OBJECT_TYPE_ORDER : null,
+        objectId: order?.id ?? null,
+        objectSlug: order ? legacyTrendOrderRef(order.slug) : null,
         type: data.type,
         points: data.points,
         lastPoints: data.lastPoints,
