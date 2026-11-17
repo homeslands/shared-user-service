@@ -5,6 +5,7 @@ import { AccumulatedPointTransactionHistory } from './entities/accumulated-point
 import { AccumulatedPointService } from './accumulated-point.service';
 import { AccumulatedPointController } from './accumulated-point.controller';
 import { AccumulatedPointInternalController } from './internal/accumulated-point-internal.controller';
+import { AccumulatedPointScheduler } from './accumulated-point.scheduler';
 import { AccumulatedPointProfile } from './accumulated-point.mapper';
 import { User } from 'src/user/user.entity';
 import { Order } from 'src/order/order.entity';
@@ -19,7 +20,11 @@ import { Order } from 'src/order/order.entity';
     ]),
   ],
   controllers: [AccumulatedPointController, AccumulatedPointInternalController],
-  providers: [AccumulatedPointService, AccumulatedPointProfile],
+  providers: [
+    AccumulatedPointService,
+    AccumulatedPointProfile,
+    AccumulatedPointScheduler,
+  ],
   exports: [AccumulatedPointService],
 })
 export class AccumulatedPointModule {}
