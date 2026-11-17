@@ -172,7 +172,13 @@ export class SharedBalanceService {
         balance.points += points;
         break;
       case 'out':
-        // Throw exceptions
+        // Step 6.6 (6A-4): a debit larger than the balance went through and
+        // left the balance negative (the comment here said "Throw exceptions"
+        // and nothing was thrown). Refuse it. The internal debit route checks
+        // the same on a locked row and in the WHERE of its UPDATE.
+        if (balance.points < points) {
+          throw new BalanceException(BalanceValidation.INSUFFICIENT_BALANCE);
+        }
         balance.points -= points;
         break;
       default:

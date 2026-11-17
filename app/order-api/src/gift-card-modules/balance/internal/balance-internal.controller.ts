@@ -16,12 +16,18 @@ import {
 import { INTERNAL_BATCH_LOOKUP_MAX } from 'src/common/constants/internal-api.constant';
 import { BalanceService } from '../balance.service';
 import {
-  BalanceCreditResponse,
   BalanceLookupResponse,
+  BalanceMoveResponse,
+  BalanceTransactionResponse,
   BatchLookupBalanceRequestDto,
   CreditBalanceRequestDto,
+  DebitBalanceRequestDto,
   LookupBalanceRequestDto,
+  TransactionKeyRequestDto,
 } from './balance-internal.dto';
+
+const serviceOfKey = (transactionId: string): string =>
+  transactionId.split(':')[0];
 
 // Wallet (xu) routes for the calling services (trend, terminal), step 6.5.
 // Same fence as user-internal.controller.ts: InternalApiGuard on the class,
@@ -33,8 +39,9 @@ import {
 // '<service>:<reference>[:<op>[:<seq>]]'. This layer resolves the User once and
 // hands the entity to BalanceService.
 //
-// Step 6.6 adds debit / release / lookup-transaction / analysis here. There
-// is no reserve / confirm on xu (QD9): the only xu spending path is one step.
+// Step 6.6 adds debit / release / lookup-transaction; analysis (QD17, the
+// "view on behalf" group) comes with step 6.10. There is no reserve / confirm
+// on xu (QD9): the only xu spending path is one step.
 @UseGuards(InternalApiGuard)
 @Controller('internal/balance')
 export class BalanceInternalController {
@@ -86,13 +93,8 @@ export class BalanceInternalController {
     @Body(new ValidationPipe({ transform: true }))
     body: CreditBalanceRequestDto,
     @Req() request: InternalRequest,
-  ): Promise<BalanceCreditResponse> {
-    const service = body.transactionId.split(':')[0];
-    if (request.internalService && service !== request.internalService) {
-      throw new BadRequestException(
-        `transactionId prefix '${service}' does not match the calling service '${request.internalService}'`,
-      );
-    }
+  ): Promise<BalanceMoveResponse> {
+    this.assertKeyOfCaller(body.transactionId, request);
     const user = await this.balanceService.findUserById(body.userId);
     if (!user) throw new NotFoundException('User not found');
     return this.balanceService.creditByKey(user, {
@@ -103,5 +105,79 @@ export class BalanceInternalController {
       objectSlug: body.objectSlug,
       desc: body.desc,
     });
+  }
+
+  // Take xu in ONE step (QD9): the only xu spending path of trend
+  // (job.service.ts, an order paid with xu) has nothing between reserving and
+  // confirming. Idempotent on transactionId like credit. A short balance is
+  // refused (INSUFFICIENT_BALANCE, 400) and the balance never goes below zero.
+  @Public()
+  @Post('debit')
+  async debit(
+    @Body(new ValidationPipe({ transform: true }))
+    body: DebitBalanceRequestDto,
+    @Req() request: InternalRequest,
+  ): Promise<BalanceMoveResponse> {
+    this.assertKeyOfCaller(body.transactionId, request);
+    const user = await this.balanceService.findUserById(body.userId);
+    if (!user) throw new NotFoundException('User not found');
+    return this.balanceService.debitByKey(user, {
+      points: body.points,
+      transactionId: body.transactionId,
+      objectType: body.objectType,
+      objectId: body.objectId,
+      objectSlug: body.objectSlug,
+      desc: body.desc,
+    });
+  }
+
+  // Give a debit back, called with the key of the debit (trend-api.md 7.4
+  // Z-7: what the xu paid for failed after the debit). Writes the credit
+  // '<key>:release'; releasing twice gives back once. 404 when the debit was
+  // never written, 409 when the key is not a debit.
+  @Public()
+  @Post('release')
+  async release(
+    @Body(new ValidationPipe({ transform: true }))
+    body: TransactionKeyRequestDto,
+    @Req() request: InternalRequest,
+  ): Promise<BalanceMoveResponse> {
+    this.assertKeyOfCaller(body.transactionId, request);
+    return this.balanceService.releaseByKey(body.transactionId);
+  }
+
+  // QD10: after a timeout and a failed retry the caller asks whether its
+  // transaction was written. A service only sees its own transactions: a key
+  // under another service's prefix is answered 404, as if it did not exist.
+  @Public()
+  @Post('lookup-transaction')
+  async lookupTransaction(
+    @Body(new ValidationPipe({ transform: true }))
+    body: TransactionKeyRequestDto,
+    @Req() request: InternalRequest,
+  ): Promise<BalanceTransactionResponse> {
+    if (!request.internalService) {
+      throw new BadRequestException(
+        'x-internal-service is required to look a transaction up',
+      );
+    }
+    const transaction =
+      serviceOfKey(body.transactionId) === request.internalService
+        ? await this.balanceService.findTransactionByKey(body.transactionId)
+        : null;
+    if (!transaction) throw new NotFoundException('Transaction not found');
+    return transaction;
+  }
+
+  private assertKeyOfCaller(
+    transactionId: string,
+    request: InternalRequest,
+  ): void {
+    const service = serviceOfKey(transactionId);
+    if (request.internalService && service !== request.internalService) {
+      throw new BadRequestException(
+        `transactionId prefix '${service}' does not match the calling service '${request.internalService}'`,
+      );
+    }
   }
 }
