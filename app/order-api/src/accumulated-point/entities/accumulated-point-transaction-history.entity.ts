@@ -74,4 +74,24 @@ export class AccumulatedPointTransactionHistory extends Base {
     collation: 'utf8mb4_bin',
   })
   externalTransactionId?: string;
+
+  // Expiry of a reservation row (step 6.4, QD11, migration v4.0.0-05): sent by
+  // the calling service on reserve; the step 6.8 job releases reserve/pending
+  // rows past it. NULL = no expiry (old rows, rows of the existing reserve
+  // path).
+  @AutoMap()
+  @Column({
+    type: 'timestamp',
+    precision: 6,
+    name: 'expires_at_column',
+    nullable: true,
+  })
+  expiresAt?: Date;
+
+  // Not mapped: active_reservation_key_column, a STORED generated column that
+  // is '<accumulated_point_column>:<service>' on an active reservation
+  // (reserve/pending, not soft deleted) and NULL otherwise, under the unique
+  // index ACTIVE_RESERVATION_INDEX: at most one active reservation per
+  // (person, service) (step 6.4, QD-T3). The database computes it on every
+  // write.
 }

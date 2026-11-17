@@ -7,6 +7,7 @@ import {
   Between,
   Not,
   In,
+  Like,
 } from 'typeorm';
 import { AccumulatedPoint } from './entities/accumulated-point.entity';
 import { AccumulatedPointTransactionHistory } from './entities/accumulated-point-transaction-history.entity';
@@ -14,7 +15,9 @@ import {
   AccumulatedPointTransactionType,
   AccumulatedPointTransactionStatus,
   ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
+  ACTIVE_RESERVATION_INDEX,
   orderSlugOfRef,
+  serviceOfRef,
 } from './accumulated-point.constants';
 import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
@@ -411,11 +414,18 @@ export class AccumulatedPointService {
     // 1 order can reserve multiple times
     // If reservation exists, create new reservation then the old one will be deleted
     // User cannot create 2 orders and reserve at the same time
+    // ... within one service (step 6.4, QD-T3): a reservation held in another
+    // service does not block this one, as in the unique index
+    // ACTIVE_RESERVATION_INDEX, which also stops two requests that both pass
+    // this check.
     const existingReservationForOtherOrder =
       await this.transactionHistoryRepository.findOne({
         where: {
           objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
           objectId: Not(order.id),
+          objectSlug: Like(
+            `${serviceOfRef(legacyTrendOrderRef(order.slug))}:%`,
+          ),
           accumulatedPoint: { id: accumulatedPoint.id },
           type: AccumulatedPointTransactionType.RESERVE,
           status: AccumulatedPointTransactionStatus.PENDING,
@@ -510,6 +520,10 @@ export class AccumulatedPointService {
         error.stack,
         context,
       );
+      // A reservation refused by the active reservation index keeps its own
+      // code (see createTransactionHistory); anything else is reported as
+      // before.
+      if (error instanceof AccumulatedPointException) throw error;
       throw new AccumulatedPointException(
         AccumulatedPointValidation.ERROR_CREATING_TRANSACTION_HISTORY,
       );
@@ -768,6 +782,17 @@ export class AccumulatedPointService {
         error.stack,
         context,
       );
+      // Two reservations of one person for one service raced past the
+      // findOne check of reservePointsForOrder: the unique index of step 6.4
+      // let only one of them in. Same answer as the findOne check.
+      if (
+        (error?.code ?? error?.driverError?.code) === 'ER_DUP_ENTRY' &&
+        String(error?.message).includes(ACTIVE_RESERVATION_INDEX)
+      ) {
+        throw new AccumulatedPointException(
+          AccumulatedPointValidation.POINTS_ALREADY_RESERVED_FOR_OTHER_ORDER,
+        );
+      }
       throw new AccumulatedPointException(
         AccumulatedPointValidation.ERROR_CREATING_TRANSACTION_HISTORY,
       );
