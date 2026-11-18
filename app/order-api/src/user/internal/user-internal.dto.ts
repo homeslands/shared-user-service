@@ -13,7 +13,10 @@ import {
   IsString,
   IsDateString,
 } from 'class-validator';
-import { INTERNAL_LIST_RECENT_MAX_LIMIT } from 'src/common/constants/internal-api.constant';
+import {
+  INTERNAL_LIST_RECENT_MAX_LIMIT,
+  INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
+} from 'src/common/constants/internal-api.constant';
 
 // DTO RIENG cho POST /internal/users - co tinh KHONG dung lai
 // CreateUserRequestDto cua route client-facing POST /user. Hai ly do:
@@ -183,6 +186,24 @@ export class BatchLookupUserRequestDto {
   @ArrayNotEmpty({ message: 'ids must not be empty' })
   @IsArray({ message: 'ids must be an array' })
   ids: string[];
+}
+
+// QD4 (buoc 7.1) - POST /internal/users/search-by-phonenumber. `phonenumber`
+// la CHUOI CON can khop (vd 4 so cuoi), khong phai SDT day du. `limit` chi
+// duoc HA tran xuong, khong nang qua INTERNAL_SEARCH_BY_PHONENUMBER_MAX.
+export class SearchByPhonenumberRequestDto {
+  // Thu tu nhu BatchLookupUserRequestDto: thong bao cua decorator khai CUOI
+  // ra truoc => thieu field nhan "is required", sai kieu nhan "must be a string".
+  @IsString({ message: 'phonenumber must be a string' })
+  @IsNotEmpty({ message: 'phonenumber is required' })
+  phonenumber: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(INTERNAL_SEARCH_BY_PHONENUMBER_MAX)
+  limit?: number;
 }
 
 export class ListRecentUserRequestDto {
