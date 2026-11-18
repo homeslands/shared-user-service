@@ -37,7 +37,7 @@ import { HasRoles } from 'src/role/roles.decorator';
 import { RoleEnum } from 'src/role/role.enum';
 import { CurrentUser } from './user.decorator';
 import { AuthProfileResponseDto } from 'src/auth/auth.dto';
-import { UserScheduler } from './user.scheduler';
+import { BirthdayProducerRun, UserScheduler } from './user.scheduler';
 
 @Controller('user')
 @ApiTags('User')
@@ -58,13 +58,18 @@ export class UserController {
     status: HttpStatus.OK,
     description: 'Birthday greeting scheduler has been triggered successfully',
   })
-  async triggerBirthdayScheduler(): Promise<AppResponseDto<void>> {
-    await this.userScheduler.BirthdayStrategyScheduler();
+  async triggerBirthdayScheduler(): Promise<
+    AppResponseDto<BirthdayProducerRun>
+  > {
+    // Step 6.16: the run says whether the producer is on and how many jobs it
+    // wrote; it no longer greets anyone itself (QD13).
+    const result = await this.userScheduler.BirthdayStrategyScheduler();
     return {
       message: 'Birthday greeting scheduler has been triggered successfully',
       statusCode: HttpStatus.OK,
       timestamp: new Date().toISOString(),
-    } as AppResponseDto<void>;
+      result,
+    } as AppResponseDto<BirthdayProducerRun>;
   }
 
   // ⛔ LO HONG CUA GIAI DOAN 1 - VA 25/09/2026.

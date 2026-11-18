@@ -9,12 +9,21 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { UserBirthdayProducer } from './user-birthday.producer';
-import { CampaignService } from 'src/campaign/campaign.service';
-import { CampaignType } from 'src/campaign/campaign.constants';
+import { USER_BIRTHDAY_QUEUE_PREFIX_ENV } from './user-birthday.constants';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { DistributeLockJobKey, QueueRegisterKey } from 'src/app/app.constants';
 import Redlock from 'redlock';
+
+// What one run of the birthday producer did (returned by the manual trigger
+// route POST /user/birthday/trigger).
+export interface BirthdayProducerRun {
+  enabled: boolean;
+  birthdayDM?: string;
+  users?: number;
+  enqueued?: number;
+  failed?: boolean;
+}
 
 @Injectable()
 export class UserScheduler {
@@ -27,7 +36,6 @@ export class UserScheduler {
     @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger,
     private readonly configService: ConfigService,
     private readonly userBirthdayProducer: UserBirthdayProducer,
-    private readonly campaignService: CampaignService,
     @InjectQueue(QueueRegisterKey.DISTRIBUTE_LOCK_JOB)
     private readonly distributeLockJobQueue: Queue,
   ) {
@@ -143,19 +151,40 @@ export class UserScheduler {
     return day + month;
   }
 
+  // Step 6.16 (QD13): shared-user owns the date of birth, the consumer owns the
+  // campaigns. This scheduler finds the users whose birthday is tomorrow and
+  // hands each one to the consumer as a job naming the user (sharedUserId);
+  // granting the campaign rewards and greeting (what this method did up to
+  // step 6.15, through CampaignService and a consumer of its own) is the
+  // consumer's job from now on.
   @Cron(CronExpression.EVERY_DAY_AT_5PM)
-  async BirthdayStrategyScheduler() {
+  async BirthdayStrategyScheduler(): Promise<BirthdayProducerRun> {
     const context = `${UserScheduler.name}.${this.BirthdayStrategyScheduler.name}`;
 
+    // Off until step 8.1 (USER_BIRTHDAY_QUEUE_PREFIX unset): the consumer does
+    // not handle the job yet and still runs its own birthday scheduler. Return
+    // before the lock: that scheduler takes the same Redlock key, and a lock
+    // held here is a day without greetings on the consumer side
+    // (issuses/birthday-scheduler-shared-redlock-key.md).
+    if (!this.userBirthdayProducer.isEnabled()) {
+      this.logger.log(
+        `Birthday producer is off (${USER_BIRTHDAY_QUEUE_PREFIX_ENV} not set), skipping`,
+        context,
+      );
+      return { enabled: false };
+    }
+
     // Distributed lock: with multiple app instances, only one may run the daily
-    // birthday sender. The lock is held for its TTL so a second instance
-    // starting within the window is skipped (no duplicate greeting jobs).
+    // birthday producer. The lock is held for its TTL so a second instance
+    // starting within the window is skipped (no duplicate jobs).
     const client = await this.distributeLockJobQueue.client;
     const redlock = new Redlock([client]);
     const key = DistributeLockJobKey.SEND_BIRTHDAY_EVERY_DAY_AT_1AM;
     const ttl = 1000 * 60 * 2; // 2 minutes
     const resource = [key];
     let lock: any = null;
+    const tomorrowDM = this.processBirthday();
+    let enqueued = 0;
 
     try {
       lock = await redlock.acquire(resource, ttl);
@@ -164,88 +193,26 @@ export class UserScheduler {
         context,
       );
 
-      // Only run the birthday sender when a birthday campaign is available.
-      // Each campaign's reward type decides which channels are used:
-      // voucher -> SMS + Email, gift -> SMS + Zalo + Email.
-      const campaigns =
-        await this.campaignService.getAvailableBirthdayCampaigns();
-      if (campaigns.length === 0) {
-        this.logger.log(
-          `No available ${CampaignType.USER_BIRTHDAY} campaign, skipping birthday sender`,
-          context,
-        );
-        return;
-      }
-
-      const tomorrowDM = this.processBirthday();
       const users = await this.userRepository.find({
-        where: {
-          dobDM: tomorrowDM,
-        },
+        select: { id: true, slug: true },
+        where: { dobDM: tomorrowDM },
       });
-
-      if (users.length === 0) {
-        this.logger.log(
-          `Found 0 user that has birthday tomorrow (${tomorrowDM})`,
-          context,
-        );
-        return;
-      }
-
       this.logger.log(
-        `Found ${users.length} user(s) with birthday tomorrow (${tomorrowDM}). Enqueuing to Redis...`,
+        `Found ${users.length} user(s) with birthday tomorrow (${tomorrowDM})`,
         context,
       );
 
-      // Write each birthday user into Redis; the UserBirthdayProducer fans each
-      // user out into per-channel jobs (based on the reward type) that the
-      // UserBirthdayConsumer processes independently and at the same time.
       const year = new Date().getFullYear();
       for (const user of users) {
-        // Cấp phần thưởng cho mọi campaign USER_BIRTHDAY đang mở (voucher hoặc
-        // gift) — tạo CampaignRecipient nếu chưa có — trước khi gửi lời chúc.
-        // Thay cho luồng CampaignScheduler.handleBirthdayCampaigns (1AM) đã ẩn:
-        // gộp grant + greet vào một luồng duy nhất, chạy trước sinh nhật 1 ngày.
-        await this.campaignService.triggerForUser(
-          user,
-          CampaignType.USER_BIRTHDAY,
-        );
-
-        for (const campaign of campaigns) {
-          // Only greet valid recipients (Flow 1 granted the reward this year),
-          // and at most once per year. Claim the greeting here — before fanning
-          // out to channels — so a re-run enqueues nothing (neither Zalo/SMS nor
-          // email), instead of gating each channel separately.
-          const recipient = await this.campaignService.findBirthdayRecipient(
-            campaign.id,
-            user.id,
-            year,
-          );
-          if (!recipient) {
-            this.logger.warn(
-              `User ${user.slug} is not a valid birthday recipient for campaign ${campaign.slug} in ${year}, skip`,
-              context,
-            );
-            continue;
-          }
-          const claimed = await this.campaignService.claimBirthdayGreeting(
-            recipient.id,
-          );
-          if (!claimed) {
-            this.logger.warn(
-              `User ${user.slug} already greeted for campaign ${campaign.slug} in ${year}, skip`,
-              context,
-            );
-            continue;
-          }
-          await this.userBirthdayProducer.enqueueUser(user, campaign);
-        }
+        await this.userBirthdayProducer.enqueueUser(user, tomorrowDM, year);
+        enqueued++;
       }
-
-      this.logger.log(
-        `Enqueued ${users.length} birthday greeting job(s)`,
-        context,
-      );
+      return {
+        enabled: true,
+        birthdayDM: tomorrowDM,
+        users: users.length,
+        enqueued,
+      };
     } catch (error) {
       if (lock) {
         await lock.release();
@@ -255,11 +222,11 @@ export class UserScheduler {
         );
       }
       this.logger.error(
-        `Error when sending birthday greetings`,
+        `Error when enqueuing birthday jobs`,
         error.stack,
         context,
       );
-      return;
+      return { enabled: true, birthdayDM: tomorrowDM, enqueued, failed: true };
     }
   }
 }
