@@ -1,4 +1,11 @@
-import { Controller, Get, Param, HttpCode, HttpStatus, Query, ValidationPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Query,
+  ValidationPipe,
+} from '@nestjs/common';
 import { PointTransactionService } from './point-transaction.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiResponseWithType } from 'src/app/app.decorator';
@@ -57,21 +64,5 @@ export class PointTransactionController {
         statistics: PointTransactionStatisticItemDto[];
       }
     >;
-  }
-
-  @Get(':slug')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Retrieve the point transaction' })
-  @ApiResponseWithType({
-    status: HttpStatus.OK,
-    type: PointTransactionResponseDto,
-  })
-  async findOne(@Param('slug') slug: string) {
-    const result = await this.pointTransactionService.findOne(slug);
-    return {
-      statusCode: HttpStatus.OK,
-      timestamp: new Date().toISOString(),
-      result,
-    } as AppResponseDto<PointTransactionResponseDto>;
   }
 }

@@ -4,7 +4,6 @@ import { PointTransaction } from './entities/point-transaction.entity';
 import {
   Between,
   FindOptionsWhere,
-  IsNull,
   Like,
   MoreThan,
   Raw,
@@ -22,8 +21,6 @@ import {
 } from './dto/point-transaction-response.dto';
 import { createSortOptions } from 'src/shared/utils/obj.util';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
-import { PointTransactionException } from './point-transaction.exception';
-import { PointTransactionValidation } from './point-transaction.validation';
 import { FindAllPointTransactionDto } from './dto/find-all-point-transaction.dto';
 import {
   PointTransactionGroupBy,
@@ -459,22 +456,5 @@ export class PointTransactionService {
         service: serviceOfTransactionKey(pts[i].externalTransactionId),
       }));
     return { items, total };
-  }
-
-  async findOne(slug: string) {
-    const context = `${PointTransactionService.name}.${this.findOne.name}`;
-    this.logger.log(`Find point transaction: ${JSON.stringify(slug)}`, context);
-
-    const pt = await this.ptRepository.findOne({
-      where: {
-        slug: slug ?? IsNull(),
-      },
-      relations: ['user'],
-    });
-    if (!pt)
-      throw new PointTransactionException(
-        PointTransactionValidation.POINT_TRANSACTION_NOT_FOUND,
-      );
-    return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
   }
 }
