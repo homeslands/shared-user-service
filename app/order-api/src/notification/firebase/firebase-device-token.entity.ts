@@ -23,7 +23,7 @@ export class FirebaseDeviceToken extends Base {
   userAgent?: string;
 
   @AutoMap()
-  @ManyToOne(() => User, (user) => user.firebaseDeviceTokens, {
+  @ManyToOne(() => User, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'user_column' })

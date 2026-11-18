@@ -18,7 +18,7 @@ export class CampaignRecipient extends Base {
   @JoinColumn({ name: 'campaign_column' })
   campaign: Campaign;
 
-  @ManyToOne(() => User, (user) => user.campaignRecipients)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'user_column' })
   user: User;
 

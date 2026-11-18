@@ -1,3 +1,4 @@
+import { UserGroupMember } from 'src/user-group-member/user-group-member.entity';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -228,7 +229,6 @@ export class VoucherUtils {
       },
       relations: {
         role: true,
-        userGroupMembers: { userGroup: true },
       },
     });
 
@@ -251,7 +251,7 @@ export class VoucherUtils {
           //   );
           // }
           // validate user group
-          this.validateVoucherCustomerType(voucher, user);
+          await this.validateVoucherCustomerType(voucher, user);
 
           // validate number of usage per user
           const allOrders = await this.orderRepository.find({
@@ -699,10 +699,18 @@ export class VoucherUtils {
     return true;
   }
 
-  validateVoucherCustomerType(voucher: Voucher, user: User): void {
+  async validateVoucherCustomerType(
+    voucher: Voucher,
+    user: User,
+  ): Promise<void> {
     const context = `${VoucherUtils.name}.${this.validateVoucherCustomerType.name}`;
     if (voucher.customerType === VoucherCustomerType.GROUP) {
-      const hasCommonGroup = user.userGroupMembers.some((ug) =>
+      // Step 6.13: User no longer holds userGroupMembers; read the member side.
+      const userGroupMembers = await this.userRepository.manager.find(
+        UserGroupMember,
+        { where: { user: { id: user.id } }, relations: { userGroup: true } },
+      );
+      const hasCommonGroup = userGroupMembers.some((ug) =>
         voucher.voucherUserGroups.some(
           (vg) => vg.userGroup.slug === ug.userGroup.slug,
         ),

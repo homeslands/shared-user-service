@@ -49,8 +49,6 @@ import {
 import moment from 'moment';
 import { v4 as uuidv4 } from 'uuid';
 import { Branch } from 'src/branch/branch.entity';
-import { BranchValidation } from 'src/branch/branch.validation';
-import { BranchException } from 'src/branch/branch.exception';
 import { FileService } from 'src/file/file.service';
 import { MailService } from 'src/mail/mail.service';
 import { ForgotPasswordToken } from './entity/forgot-password-token.entity';
@@ -1425,7 +1423,7 @@ export class AuthService {
     const context = `${AuthService.name}.${this.uploadAvatar.name}`;
     const userEntity = await this.userUtils.getUser({
       where: { id: user.userId },
-      relations: ['branch', 'role.permissions.authority.authorityGroup'],
+      relations: ['role.permissions.authority.authorityGroup'],
     });
 
     // Delete old avatar
@@ -1495,7 +1493,6 @@ export class AuthService {
    * @param {CurrentUserDto} currentUserDto The currently authenticated user's details.
    * @param {UpdateAuthProfileRequestDto} requestData
    * @returns {Promise<AuthProfileResponseDto>} Updated user profile
-   * @throws {BranchException} Throw if branch is not found
    * @throws {AuthException} Throw if user is not found
    */
   async updateProfile(
@@ -1511,17 +1508,6 @@ export class AuthService {
     Object.assign(user, {
       ...requestData,
     });
-
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: { slug: requestData.branch },
-      });
-      if (!branch) {
-        this.logger.warn(`Branch ${requestData.branch} not found`, context);
-        throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      }
-      user.branch = branch;
-    }
 
     if ('dob' in requestData) {
       const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
@@ -2178,9 +2164,6 @@ export class AuthService {
     const user = await this.userUtils.getUser({
       where: { id: userId },
       relations: {
-        branch: {
-          addressDetail: true,
-        },
         role: {
           permissions: {
             authority: {

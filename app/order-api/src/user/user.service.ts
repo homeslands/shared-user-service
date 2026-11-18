@@ -56,8 +56,6 @@ import { UserValidation } from './user.validation';
 import { RoleValidation } from 'src/role/role.validation';
 import { RoleException } from 'src/role/role.exception';
 import * as _ from 'lodash';
-import { BranchValidation } from 'src/branch/branch.validation';
-import { BranchException } from 'src/branch/branch.exception';
 import { Branch } from 'src/branch/branch.entity';
 import { AuthException } from 'src/auth/auth.exception';
 import { AuthValidation } from 'src/auth/auth.validation';
@@ -136,7 +134,7 @@ export class UserService {
       where: {
         slug,
       },
-      relations: ['branch', 'role'],
+      relations: ['role'],
     });
 
     if (!user) {
@@ -619,24 +617,13 @@ export class UserService {
     const context = `${UserService.name}.${this.updateUser.name}`;
     const user = await this.userRepository.findOne({
       where: { slug },
-      relations: ['branch', 'role'],
+      relations: ['role'],
     });
     if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
 
     Object.assign(user, {
       ...requestData,
     });
-
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: { slug: requestData.branch },
-      });
-      if (!branch) {
-        this.logger.warn(`Branch ${requestData.branch} not found`, context);
-        throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      }
-      user.branch = branch;
-    }
 
     if ('dob' in requestData) {
       const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
@@ -837,16 +824,6 @@ export class UserService {
       ownerService: options?.ownerService ?? null,
     });
 
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: {
-          slug: requestData.branch,
-        },
-      });
-      if (!branch) throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      user.branch = branch;
-    }
-
     let createdUser = null;
     if (createdRole == RoleEnum.Admin || createdRole == RoleEnum.SuperAdmin) {
       user.isVerifiedPhonenumber = requestData.isVerifiedPhonenumber ?? false;
@@ -936,7 +913,6 @@ export class UserService {
     // Construct where options
     const whereOptions: FindOptionsWhere<User> = {};
     if (query.slug) whereOptions.slug = query.slug;
-    if (query.branch) whereOptions.branch = { slug: query.branch };
     if (query.phonenumber)
       whereOptions.phonenumber = Like(`%${query.phonenumber}%`);
     if (!_.isEmpty(query.role))
@@ -993,7 +969,6 @@ export class UserService {
     // Construct find many options
     const findManyOptions: FindManyOptions<User> = {
       relations: {
-        branch: true,
         role: true,
         accumulatedPoint: true,
         membershipCard: true,
@@ -1105,7 +1080,7 @@ export class UserService {
       };
 
     let users = await this.userRepository.find({
-      relations: { branch: true, role: true },
+      relations: { role: true },
       where: whereOptions,
       order: { createdAt: 'DESC' },
     });

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { IsNull } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
+import { branchIdOfUser } from 'src/notification/user-branch.helper';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { randomBytes, createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -22,6 +23,7 @@ export class QrPaymentService {
     private readonly logger: Logger,
     private readonly sharedRedisService: SharedRedisService,
     private readonly userUtils: UserUtils,
+    private readonly dataSource: DataSource,
     private readonly configService: ConfigService,
   ) {}
 
@@ -140,10 +142,14 @@ export class QrPaymentService {
     // 6. Validate staff belongs to order branch
     const staff = await this.userUtils.getUser({
       where: { id: currentUser.userId ?? IsNull() },
-      relations: ['branch'],
     });
+    // Step 6.13: User no longer maps branch (see user-branch.helper.ts).
+    const staffBranchId = await branchIdOfUser(
+      this.dataSource.manager,
+      staff.id,
+    );
 
-    if (!staff.branch || !order.branch || staff.branch.id !== order.branch.id) {
+    if (!staffBranchId || !order.branch || staffBranchId !== order.branch.id) {
       this.logger.warn(
         `Staff ${staff.slug} not in order branch ${order.branch?.slug}`,
         context,
