@@ -1,76 +1,65 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { JobsOptions, Queue } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
+import { Queue } from 'bullmq';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { QueueRegisterKey } from 'src/app/app.constants';
-import { AvailableBirthdayCampaign } from 'src/campaign/campaign.constants';
 import { User } from './user.entity';
 import {
-  BirthdayJobData,
-  SEND_BIRTHDAY_EMAIL_JOB,
-  SEND_BIRTHDAY_MULTI_CHANNEL_JOB,
+  USER_BIRTHDAY_QUEUE_PREFIX_ENV,
+  USER_BIRTHDAY_TRIGGERED_JOB,
+  UserBirthdayTriggeredJobData,
 } from './user-birthday.constants';
 
+// Producer half of the birthday flow (QD13, step 6.16). The queue is
+// registered under the consumer's prefix (UserModule); this class only decides
+// whether to write and what.
 @Injectable()
 export class UserBirthdayProducer {
   constructor(
     @InjectQueue(QueueRegisterKey.USER_BIRTHDAY)
     private readonly birthdayQueue: Queue,
     @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger,
+    private readonly configService: ConfigService,
   ) {}
 
+  // Prefix of the consuming service, '' when the producer is off.
+  consumerPrefix(): string {
+    return (
+      this.configService.get<string>(USER_BIRTHDAY_QUEUE_PREFIX_ENV) ?? ''
+    ).trim();
+  }
+
+  isEnabled(): boolean {
+    return this.consumerPrefix() !== '';
+  }
+
   /**
-   * Enqueue a birthday greeting for a user under a given campaign:
-   *  - one multi-channel message (Zalo -> SMS fallback), if the user has a phone;
-   *    deduplicated per user so multiple campaigns don't send duplicate messages.
-   *  - one email (content depends on the campaign), if the user has an email.
+   * Tell the consumer that a user has a birthday on birthdayDM. One job per
+   * user and year: a second run of the same day (the manual trigger route)
+   * does not add a second job while the first one waits. The consumer's own
+   * once-per-year greeting check stays the real guard.
    */
   async enqueueUser(
-    user: User,
-    campaign: AvailableBirthdayCampaign,
+    user: Pick<User, 'id' | 'slug'>,
+    birthdayDM: string,
+    year: number,
   ): Promise<void> {
     const context = `${UserBirthdayProducer.name}.${this.enqueueUser.name}`;
-    const data: BirthdayJobData = {
-      id: user.id,
-      slug: user.slug,
-      phonenumber: user.phonenumber,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      campaignId: campaign.id,
-      campaignSlug: campaign.slug,
-      rewardType: campaign.rewardType,
+    const data: UserBirthdayTriggeredJobData = {
+      sharedUserId: user.id,
+      birthdayDM,
+      year,
     };
-
-    const baseOpts: JobsOptions = {
+    await this.birthdayQueue.add(USER_BIRTHDAY_TRIGGERED_JOB, data, {
+      jobId: `${USER_BIRTHDAY_TRIGGERED_JOB}:${year}:${user.id}`,
       removeOnComplete: true,
       removeOnFail: true,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
-    };
-
-    const enqueued: string[] = [];
-
-    // Congrats message is campaign-agnostic -> one per user (deduped across campaigns).
-    if (user.phonenumber) {
-      await this.birthdayQueue.add(SEND_BIRTHDAY_MULTI_CHANNEL_JOB, data, {
-        ...baseOpts,
-        jobId: `${SEND_BIRTHDAY_MULTI_CHANNEL_JOB}:${user.id}`,
-      });
-      enqueued.push(SEND_BIRTHDAY_MULTI_CHANNEL_JOB);
-    }
-
-    // Email content is campaign-specific -> one per campaign.
-    if (user.email) {
-      await this.birthdayQueue.add(SEND_BIRTHDAY_EMAIL_JOB, data, {
-        ...baseOpts,
-        jobId: `${SEND_BIRTHDAY_EMAIL_JOB}:${campaign.id}:${user.id}`,
-      });
-      enqueued.push(SEND_BIRTHDAY_EMAIL_JOB);
-    }
-
+    });
     this.logger.log(
-      `Enqueued birthday greeting for user ${user.slug} (campaign ${campaign.slug}) on [${enqueued.join(', ')}]`,
+      `Enqueued ${USER_BIRTHDAY_TRIGGERED_JOB} for user ${user.slug} on ${this.birthdayQueue.opts.prefix}:${this.birthdayQueue.name}`,
       context,
     );
   }
