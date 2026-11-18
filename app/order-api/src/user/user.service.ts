@@ -222,6 +222,41 @@ export class UserService {
     );
   }
 
+  // QD4 (buoc 7.1) - POST /internal/users/search-by-phonenumber. Tra MANG ID
+  // cua moi user co SDT chua `fragment` (chuoi con, LIKE %...%), de ben goi
+  // loc danh sach cua no bang `shared_user_id_column IN (...)`.
+  //
+  // CHI DE LOC. Khong dung thay `lookup` o bat ky duong ghi nao: `lookup` la
+  // tra danh tinh CHINH XAC (JwtStrategy, moi luong ghi), con day la khop mo.
+  //
+  // Khop nhieu hon `limit` => 400 ma 137007, khong cat bot: lay `limit + 1`
+  // hang de biet co vuot hay khong ma khong phai dem ca bang.
+  async searchIdsByPhonenumber(
+    fragment: string,
+    limit: number,
+  ): Promise<string[]> {
+    const needle = fragment.trim();
+    if (!needle) {
+      throw new BadRequestException('phonenumber is required');
+    }
+    // Ky tu dai dien cua LIKE trong chuoi nguoi dung go phai la ky tu thuong:
+    // go `_` khong duoc khop moi ky tu. MySQL mac dinh ESCAPE '\'.
+    const escaped = needle.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    const users = await this.userRepository.find({
+      select: { id: true },
+      where: { phonenumber: Like(`%${escaped}%`) },
+      order: { id: 'ASC' },
+      take: limit + 1,
+    });
+    if (users.length > limit) {
+      throw new UserException(
+        UserValidation.PHONENUMBER_SEARCH_TOO_BROAD,
+        `Phone number search matches more than ${limit} users, please narrow the search`,
+      );
+    }
+    return users.map((user) => user.id);
+  }
+
   // Dung cho InternalUserController - job batch cuoi ngay ben service tieu
   // thu (trend/terminal) tu pull user moi tao trong khoang [createdFrom,
   // createdTo) de bu cho khoang tre cua lazy load thuan (user dang ky roi
