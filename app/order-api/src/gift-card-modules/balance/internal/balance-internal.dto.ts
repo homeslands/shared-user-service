@@ -103,10 +103,15 @@ export class TransactionKeyRequestDto {
 }
 
 // Response of lookup / batch-lookup: points is the balance (xu) of the user,
-// 0 when the user has no balance row yet.
+// 0 when the user has no balance row yet. Step 7.7d: slug and createdAt of
+// the balance row, null without a row - GET /balance?userSlug= of trend and
+// terminal (the staff view of one customer, QD-T10) keeps answering the
+// monolith shape { slug, createdAt, points } from this lookup.
 export interface BalanceLookupResponse {
   userId: string;
   points: number;
+  slug: string | null;
+  createdAt: Date | null;
 }
 
 // Response of credit / debit / release: the ledger row written (its key,
