@@ -5,7 +5,6 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Between,
@@ -65,7 +64,6 @@ import moment from 'moment';
 import ExcelJS from 'exceljs';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
-import { CampaignAction } from 'src/campaign/campaign.constants';
 import { v4 as uuidv4 } from 'uuid';
 
 // Thong diep 409 cua POST /internal/users/import - ben goi phan biet trung
@@ -97,15 +95,8 @@ export class UserService {
     private readonly logger: Logger,
     private readonly sharedBalanceService: SharedBalanceService,
     private readonly transactionManagerService: TransactionManagerService,
-    private readonly eventEmitter: EventEmitter2,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
-  }
-
-  private isTodayBirthday(dobDM: string): boolean {
-    const today = new Date();
-    const todayDM = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}`;
-    return dobDM === todayDM;
   }
 
   async getUserBySlug(slug: string) {
@@ -612,14 +603,6 @@ export class UserService {
     try {
       const updatedUser = await this.userRepository.save(user);
       this.logger.log(`User ${user.id} updated profile`, context);
-      if (
-        requestData.dob &&
-        updatedUser.dobDM &&
-        this.isTodayBirthday(updatedUser.dobDM)
-      )
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: updatedUser,
-        });
       return this.mapper.map(updatedUser, User, UserResponseDto);
     } catch (error) {
       this.logger.error(
@@ -833,18 +816,8 @@ export class UserService {
         const [day, month] = requestData.dob.split('/');
         user.dobDM = `${day}${month}`;
       }
-      const createdUser = await this.userRepository.save(user);
+      await this.userRepository.save(user);
       this.logger.log(`User has been created successfully`, context);
-
-      if (createdUser) {
-        this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-          user: createdUser,
-        });
-        if (user.dobDM && this.isTodayBirthday(user.dobDM))
-          this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-            user,
-          });
-      }
     } catch (error) {
       this.logger.error(
         `Error when creating user: ${error.message}`,

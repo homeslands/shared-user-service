@@ -1,14 +1,4 @@
-import {
-  Controller,
-  Get,
-  Param,
-  HttpCode,
-  HttpStatus,
-  Query,
-  ValidationPipe,
-  Post,
-  Body,
-} from '@nestjs/common';
+import { Controller, Get, Param, HttpCode, HttpStatus, Query, ValidationPipe } from '@nestjs/common';
 import { PointTransactionService } from './point-transaction.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiResponseWithType } from 'src/app/app.decorator';
@@ -18,7 +8,6 @@ import {
 } from './dto/point-transaction-response.dto';
 import { AppPaginatedResponseDto, AppResponseDto } from 'src/app/app.dto';
 import { FindAllPointTransactionDto } from './dto/find-all-point-transaction.dto';
-import { CreatePointTransactionDto } from './dto/create-point-transaction.dto';
 import { CurrentUser } from 'src/user/user.decorator';
 import { CurrentUserDto } from 'src/user/user.dto';
 
@@ -38,25 +27,6 @@ export class PointTransactionController {
   constructor(
     private readonly pointTransactionService: PointTransactionService,
   ) {}
-
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create the point transaction' })
-  @ApiResponseWithType({
-    status: HttpStatus.OK,
-    type: PointTransactionResponseDto,
-  })
-  async create(
-    @Body(new ValidationPipe({ whitelist: true, transform: true }))
-    req: CreatePointTransactionDto,
-  ) {
-    const result = await this.pointTransactionService.create(req);
-    return {
-      statusCode: HttpStatus.OK,
-      timestamp: new Date().toISOString(),
-      result,
-    } as AppResponseDto<PointTransactionResponseDto>;
-  }
 
   // Step 6.9 (QD17): the self view. Only the transactions of the user of the
   // token; the query string filters them (type, dates, k) but names no user.

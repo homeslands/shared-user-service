@@ -1,4 +1,6 @@
-import { VoucherCustomerType } from 'src/voucher/voucher.constant';
+// Step 6.17: src/voucher/voucher.constant.ts was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+const VoucherCustomerType = { ALL: 'all', GROUP: 'group' } as const;
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class MigrateDataForCustomerTypeInVoucherEntity1764578522404

@@ -1,5 +1,4 @@
 import moment from 'moment';
-import { PaymentMethod } from 'src/payment/payment.constants';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -32,23 +31,6 @@ export const getDayIndex = (date: Date): number => {
 
 export const formatDate = (date: Date, format: string) => {
   return moment(date).format(format);
-};
-
-export const formatPaymentMethod = (method: string) => {
-  switch (method) {
-    case PaymentMethod.BANK_TRANSFER:
-      return 'Chuyển khoản';
-    case PaymentMethod.CASH:
-      return 'Tiền mặt';
-    // case PaymentMethod.INTERNAL:
-    //   return 'Ví nội bộ';
-    case PaymentMethod.POINT:
-      return 'Xu';
-    case PaymentMethod.CREDIT_CARD:
-      return 'Thẻ ngân hàng';
-    default:
-      return 'Không tìm thấy PTTT';
-  }
 };
 
 /**
