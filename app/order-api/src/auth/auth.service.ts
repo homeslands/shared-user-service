@@ -91,8 +91,6 @@ import {
   UserRequirementScope,
   UserRequirementStatus,
 } from 'src/user/user.constant';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { CampaignAction } from 'src/campaign/campaign.constants';
 
 @Injectable()
 export class AuthService {
@@ -132,7 +130,6 @@ export class AuthService {
     @InjectRepository(ZaloOaConnectorConfig)
     private readonly zaloOaConnectorConfigRepository: Repository<ZaloOaConnectorConfig>,
     private readonly sharedBalanceService: SharedBalanceService,
-    private readonly eventEmitter: EventEmitter2,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
     this.duration = this.configService.get<number>('DURATION');
@@ -142,12 +139,6 @@ export class AuthService {
     this.zaloOaApiKey = this.configService.get<string>('ZALO_OA_API_KEY');
     this.zaloOaSecretKey = this.configService.get<string>('ZALO_OA_SECRET_KEY');
     this.zaloOaId = this.configService.get<string>('ZALO_OA_ID');
-  }
-
-  private isTodayBirthday(dobDM: string): boolean {
-    const today = new Date();
-    const todayDM = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}`;
-    return dobDM === todayDM;
   }
 
   async getZaloOaConnectorConfig(
@@ -1513,14 +1504,6 @@ export class AuthService {
     try {
       const updatedUser = await this.userRepository.save(user);
       this.logger.log(`User ${user.id} updated profile`, context);
-      if (
-        requestData.dob &&
-        updatedUser.dobDM &&
-        this.isTodayBirthday(updatedUser.dobDM)
-      )
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: updatedUser,
-        });
       return this.mapper.map(updatedUser, User, AuthProfileResponseDto);
     } catch (error) {
       this.logger.error(
@@ -2013,14 +1996,6 @@ export class AuthService {
 
     if (createdUser) {
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
-      this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-        user: createdUser,
-      });
-      if (createdUser.dobDM && this.isTodayBirthday(createdUser.dobDM)) {
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: createdUser,
-        });
-      }
     }
 
     const userWithRelations = await this.userRepository.findOne({
@@ -2130,16 +2105,6 @@ export class AuthService {
 
     if (createdUser)
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
-
-    if (createdUser) {
-      this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-        user: createdUser,
-      });
-      if (createdUser.dobDM && this.isTodayBirthday(createdUser.dobDM))
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: createdUser,
-        });
-    }
 
     return this.mapper.map(createdUser, User, RegisterAuthResponseDto);
   }

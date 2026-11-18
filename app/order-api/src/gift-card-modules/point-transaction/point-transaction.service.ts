@@ -25,13 +25,11 @@ import { AppPaginatedResponseDto } from 'src/app/app.dto';
 import { PointTransactionException } from './point-transaction.exception';
 import { PointTransactionValidation } from './point-transaction.validation';
 import { FindAllPointTransactionDto } from './dto/find-all-point-transaction.dto';
-import { CreatePointTransactionDto } from './dto/create-point-transaction.dto';
 import {
   PointTransactionGroupBy,
   PointTransactionTypeEnum,
 } from './entities/point-transaction.enum';
 import { User } from 'src/user/user.entity';
-import { SharedPointTransactionService } from 'src/shared/services/shared-point-transaction.service';
 import _ from 'lodash';
 
 // Which transactions a read covers (steps 6.9 and 6.10, QD17 + QD-T5).
@@ -76,7 +74,6 @@ export class PointTransactionService {
     private readonly logger: Logger,
     @InjectMapper()
     private readonly mapper: Mapper,
-    private readonly sharedPtService: SharedPointTransactionService,
   ) {}
 
   // Step 6.10: POST /internal/point-transactions/analysis (QD-T5 scope).
@@ -118,117 +115,6 @@ export class PointTransactionService {
       statistics,
     });
     return result;
-  }
-
-  async create(req: CreatePointTransactionDto) {
-    const pt = await this.sharedPtService.create(req);
-    return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
-    // const context = `${PointTransaction.name}.${this.create.name}`;
-    // this.logger.log(
-    //   `Create point transaction req; ${JSON.stringify(req)}`,
-    //   context,
-    // );
-
-    // const payload = this.mapper.map(
-    //   req,
-    //   CreatePointTransactionDto,
-    //   PointTransaction,
-    // );
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.IN &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.ORDER
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_IN_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.OUT &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.GIFT_CARD
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_OUT_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.OUT &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.CARD_ORDER
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_OUT_CARD_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // let objectRef: Order | GiftCard | CardOrder = null;
-
-    // switch (payload.objectType) {
-    //   case PointTransactionObjectTypeEnum.ORDER:
-    //     objectRef = await this.orderRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   case PointTransactionObjectTypeEnum.GIFT_CARD:
-    //     objectRef = await this.gcRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   case PointTransactionObjectTypeEnum.CARD_ORDER:
-    //     objectRef = await this.coRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   default:
-    //     throw new PointTransactionException(
-    //       PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-    //     );
-    // }
-
-    // if (!objectRef)
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-    //   );
-
-    // const user = await this.userRepository.findOne({
-    //   where: {
-    //     slug: payload.userSlug,
-    //   },
-    // });
-
-    // if (!user)
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.USER_NOT_FOUND,
-    //   );
-
-    // Object.assign(payload, {
-    //   objectId: objectRef.id,
-    //   userId: user.id,
-    //   user: user,
-    // } as Partial<PointTransaction>);
-
-    // const pt = await this.transactionService.execute<PointTransaction>(
-    //   async (manager) => {
-    //     return manager.save(payload);
-    //   },
-    //   (res) =>
-    //     this.logger.log(
-    //       `Point transaction created: ${JSON.stringify(res)}`,
-    //       context,
-    //     ),
-    //   (err) => {
-    //     this.logger.error(
-    //       `Error when creating point transaction: ${err.message}`,
-    //       err.stack,
-    //       context,
-    //     );
-    //     throw new PointTransactionException(
-    //       PointTransactionValidation.ERROR_WHEN_CREATE_POINT_TRANSACTION,
-    //     );
-    //   },
-    // );
-    // return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
   }
 
   // scope.userId (step 6.9) is the base of the user filter and is spread into
