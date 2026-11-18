@@ -48,7 +48,6 @@ import {
 } from './auth.validation';
 import moment from 'moment';
 import { v4 as uuidv4 } from 'uuid';
-import { Branch } from 'src/branch/branch.entity';
 import { FileService } from 'src/file/file.service';
 import { MailService } from 'src/mail/mail.service';
 import { ForgotPasswordToken } from './entity/forgot-password-token.entity';
@@ -109,8 +108,6 @@ export class AuthService {
     private readonly configService: ConfigService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(Branch)
-    private readonly branchRepository: Repository<Branch>,
     @InjectRepository(Role)
     private readonly roleRepository: Repository<Role>,
     @InjectMapper()

@@ -1,7 +1,7 @@
 import { AutoMap } from '@automapper/classes';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsIn, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional } from 'class-validator';
 import { AccumulatedPointResponseDto } from 'src/accumulated-point/accumulated-point.dto';
 import { BaseQueryDto, BaseResponseDto } from 'src/app/base.dto';
 import {
@@ -11,17 +11,14 @@ import {
   INVALID_PHONENUMBER,
   INVALID_USERID,
 } from 'src/auth/auth.validation';
-import { BranchResponseDto } from 'src/branch/branch.dto';
 import { RoleResponseDto } from 'src/role/role.dto';
 import { INVALID_LANGUAGE } from './user.validation';
 import {
-  AccountRevenueCustomerType,
   DobFilterType,
   UserLanguage,
   UserStatisticsGroupBy,
 } from './user.constant';
 import { MembershipCardResponseDto } from 'src/membership-card/membership-card.dto';
-import { PaymentMethod } from 'src/payment/payment.constants';
 import { Matches } from 'class-validator';
 
 export class CreateUserRequestDto {
@@ -45,10 +42,6 @@ export class CreateUserRequestDto {
   @IsOptional()
   @AutoMap()
   lastName: string;
-
-  @ApiProperty()
-  @IsOptional()
-  branch?: string;
 
   @ApiProperty()
   @IsNotEmpty({ message: 'Invalid role' })
@@ -104,10 +97,6 @@ export class UserResponseDto extends BaseResponseDto {
   @AutoMap()
   @ApiProperty()
   readonly address: string;
-
-  @AutoMap(() => BranchResponseDto)
-  @ApiProperty({ type: () => BranchResponseDto })
-  readonly branch: BranchResponseDto;
 
   @AutoMap(() => RoleResponseDto)
   @ApiProperty()
@@ -180,10 +169,6 @@ export class UpdateUserRequestDto {
   @ApiProperty()
   @IsOptional()
   address?: string;
-
-  @ApiProperty()
-  @IsOptional()
-  branch?: string;
 }
 
 export class CompleteUserRegistrationRequestDto {
@@ -198,15 +183,6 @@ export class CompleteUserRegistrationRequestDto {
 }
 
 export class GetAllUserQueryRequestDto extends BaseQueryDto {
-  @AutoMap()
-  @ApiProperty({
-    description: 'The slug of branch',
-    example: '',
-    required: false,
-  })
-  @IsOptional()
-  branch?: string;
-
   @ApiProperty({ required: false })
   @IsOptional()
   phonenumber: string;
@@ -430,272 +406,6 @@ export class UserRequirementResponseDto extends BaseResponseDto {
   @AutoMap()
   @ApiProperty()
   lastUpdatedAt: string;
-}
-
-export class GetAccountRevenueQueryDto {
-  @AutoMap()
-  @ApiProperty({ required: true, example: 'branch-slug' })
-  @IsNotEmpty({ message: 'Branch slug is not empty' })
-  branch: string;
-
-  @AutoMap()
-  @ApiProperty({
-    description: 'Start date (giờ địa phương, format: YYYY-MM-DDTHH:mm:ss)',
-    example: '2024-01-01T00:00:00',
-    required: false,
-  })
-  @IsOptional()
-  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, {
-    message: 'Format: YYYY-MM-DDTHH:mm:ss (local time, no timezone)',
-  })
-  startDate?: string;
-
-  @AutoMap()
-  @ApiProperty({
-    description: 'End date (giờ địa phương, format: YYYY-MM-DDTHH:mm:ss)',
-    example: '2024-12-31T23:59:59',
-    required: false,
-  })
-  @IsOptional()
-  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, {
-    message: 'Format: YYYY-MM-DDTHH:mm:ss (local time, no timezone)',
-  })
-  endDate?: string;
-
-  @AutoMap()
-  @ApiProperty({
-    required: false,
-    example: PaymentMethod.CASH,
-    enum: Object.values(PaymentMethod),
-  })
-  @IsOptional()
-  @IsIn(Object.values(PaymentMethod), { message: 'Invalid payment method' })
-  paymentMethod?: string;
-
-  @AutoMap()
-  @ApiProperty({ required: false, example: '0987654321' })
-  @IsOptional()
-  phonenumber?: string;
-
-  @AutoMap()
-  @ApiProperty({
-    required: false,
-    example: AccountRevenueCustomerType.ALL,
-    enum: Object.values(AccountRevenueCustomerType),
-  })
-  @IsOptional()
-  @IsEnum(AccountRevenueCustomerType, { message: 'Invalid customer type' })
-  customerType: string = AccountRevenueCustomerType.ALL;
-
-  @AutoMap()
-  @ApiProperty({
-    description: 'Time grouping unit',
-    enum: UserStatisticsGroupBy,
-    default: UserStatisticsGroupBy.DAY,
-    required: false,
-  })
-  @IsOptional()
-  @IsEnum(UserStatisticsGroupBy)
-  @Type(() => String)
-  groupBy?: UserStatisticsGroupBy = UserStatisticsGroupBy.DAY;
-}
-
-export class AccountRevenueStatisticQueryResponseDto {
-  @AutoMap()
-  time: string;
-
-  @AutoMap()
-  count: string;
-
-  @AutoMap()
-  countPoint: string;
-
-  @AutoMap()
-  countBank: string;
-
-  @AutoMap()
-  countCash: string;
-
-  @AutoMap()
-  countCreditCard: string;
-
-  @AutoMap()
-  totalAmount: string;
-
-  @AutoMap()
-  totalAmountPoint: string;
-
-  @AutoMap()
-  totalAmountBank: string;
-
-  @AutoMap()
-  totalAmountCash: string;
-
-  @AutoMap()
-  totalAmountCreditCard: string;
-}
-
-export class AccountRevenueQueryResponseDto {
-  @AutoMap()
-  customerSlug: string;
-
-  @AutoMap()
-  customerName: string;
-
-  @AutoMap()
-  customerRegisteredAt: Date;
-
-  @AutoMap()
-  totalAmount: string;
-
-  @AutoMap()
-  totalAmountPoint: string;
-
-  @AutoMap()
-  totalAmountBank: string;
-
-  @AutoMap()
-  totalAmountCash: string;
-
-  @AutoMap()
-  totalAmountCreditCard: string;
-}
-
-export class AccountRevenueCustomerResponseDto {
-  @AutoMap()
-  @ApiProperty()
-  customerSlug: string;
-
-  @AutoMap()
-  @ApiProperty()
-  customerName: string;
-
-  @AutoMap()
-  @ApiProperty()
-  customerRegisteredAt: Date;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmount: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountPoint: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountBank: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountCash: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountCreditCard: number;
-}
-
-export class AccountRevenueSummaryResponseDto {
-  @AutoMap()
-  @ApiProperty()
-  totalAmount: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountPoint: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountBank: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountCash: number;
-
-  @AutoMap()
-  @ApiProperty()
-  totalAmountCreditCard: number;
-
-  // Share (%) of each payment method over total revenue
-  @AutoMap()
-  @ApiProperty()
-  percentPoint: number;
-
-  @AutoMap()
-  @ApiProperty()
-  percentBank: number;
-
-  @AutoMap()
-  @ApiProperty()
-  percentCash: number;
-
-  @AutoMap()
-  @ApiProperty()
-  percentCreditCard: number;
-}
-
-export class AccountRevenueStatisticItemDto {
-  @AutoMap()
-  @ApiProperty({ example: '2026-07-11T00:00:00' })
-  time: string;
-
-  @AutoMap()
-  @ApiProperty({ example: 42 })
-  count: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 12 })
-  countPoint: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 15 })
-  countBank: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 10 })
-  countCash: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 5 })
-  countCreditCard: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 1500000 })
-  totalAmount: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 500000 })
-  totalAmountPoint: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 500000 })
-  totalAmountBank: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 300000 })
-  totalAmountCash: number;
-
-  @AutoMap()
-  @ApiProperty({ example: 200000 })
-  totalAmountCreditCard: number;
-}
-
-export class AggregateAccountRevenueResponseDto {
-  @AutoMap()
-  @ApiProperty({ type: AccountRevenueSummaryResponseDto })
-  summary: AccountRevenueSummaryResponseDto;
-
-  @AutoMap()
-  @ApiProperty({ type: AccountRevenueCustomerResponseDto, isArray: true })
-  customers: AccountRevenueCustomerResponseDto[];
-
-  @AutoMap()
-  @ApiProperty({ type: AccountRevenueStatisticItemDto, isArray: true })
-  data: AccountRevenueStatisticItemDto[];
-
-  @AutoMap()
-  @ApiProperty({ example: 100 })
-  total: number;
 }
 
 export class BirthdayStrategyResponseDto {
