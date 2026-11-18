@@ -449,11 +449,16 @@ export class PointTransactionService {
       relations: ['user'],
       order: { createdAt: 'ASC' },
     });
+    // Step 7.7d: each row also carries balance, the balance of the wallet
+    // right after that transaction. The PDF statement of one user (/export of
+    // a user) prints it per row and derives its closing total from the last
+    // row; the response DTO does not map it, so it is added here.
     const items = this.mapper
       .mapArray(pts, PointTransaction, PointTransactionResponseDto)
       .map((item, i) => ({
         ...item,
         service: serviceOfTransactionKey(pts[i].externalTransactionId),
+        balance: Number(pts[i].balance),
       }));
     return { items, total };
   }
