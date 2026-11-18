@@ -3,7 +3,6 @@ import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
 import { Menu } from 'src/menu/menu.entity';
 import { Table } from 'src/table/table.entity';
-import { User } from 'src/user/user.entity';
 import { Order } from 'src/order/order.entity';
 import { Workflow } from 'src/workflow/workflow.entity';
 import { ProductAnalysis } from 'src/product-analysis/product-analysis.entity';
@@ -38,10 +37,6 @@ export class Branch extends Base {
   // one to many with table
   @OneToMany(() => Table, (table) => table.branch)
   tables: Table[];
-
-  // one to many with user
-  @OneToMany(() => User, (user) => user.branch)
-  users: User[];
 
   // one to many with order
   @OneToMany(() => Order, (order) => order.branch)

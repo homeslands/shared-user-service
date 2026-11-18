@@ -35,7 +35,7 @@ export class Recipient extends Base {
   @AutoMap()
   recipientSlug: string;
 
-  @ManyToOne(() => User, (user) => user.recipientCardOrders)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'recipient_column' })
   @AutoMap(() => User)
   recipient: User;
@@ -56,7 +56,7 @@ export class Recipient extends Base {
   @AutoMap()
   senderSlug: string;
 
-  @ManyToOne(() => User, (user) => user.senderCardOrders)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'sender_column' })
   @AutoMap(() => User)
   sender: User;

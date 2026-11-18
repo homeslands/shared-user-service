@@ -1265,16 +1265,19 @@ export class VoucherService {
     if (!_.isNil(options.assignedUser)) {
       const user = await this.userRepository.findOne({
         where: { slug: options.assignedUser },
-        relations: {
-          individualVouchers: true,
-        },
       });
       if (!user) {
         this.logger.warn('User not found', context);
         throw new UserException(UserValidation.USER_NOT_FOUND);
       }
 
-      const voucherIds = user.individualVouchers.map((item) => item.id);
+      // Step 6.13: User no longer holds individualVouchers; read the voucher side.
+      const voucherIds = (
+        await this.voucherRepository.find({
+          where: { assignedUser: { id: user.id } },
+          select: { id: true },
+        })
+      ).map((item) => item.id);
 
       findOptionsWhere.id = options.isAppliedIndividualUser
         ? In(voucherIds)

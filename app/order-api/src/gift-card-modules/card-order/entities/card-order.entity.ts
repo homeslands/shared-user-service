@@ -77,7 +77,7 @@ export class CardOrder extends Base {
   @AutoMap()
   cardPrice: number;
 
-  @ManyToOne(() => User, (user) => user.customerCardOrders)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'customer_column' })
   customer: User;
 
@@ -97,7 +97,7 @@ export class CardOrder extends Base {
   @AutoMap()
   customerPhone: string;
 
-  @ManyToOne(() => User, (user) => user.cashierCardOrders)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'cashier_column' })
   cashier: User;
 

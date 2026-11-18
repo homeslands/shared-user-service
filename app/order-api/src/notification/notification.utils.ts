@@ -1,3 +1,4 @@
+import { findUsersOfBranch } from 'src/notification/user-branch.helper';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { RoleEnum } from 'src/role/role.enum';
 import {
@@ -6,7 +7,7 @@ import {
 } from './notification.constants';
 import { NotificationProducer } from './notification.producer';
 import { User } from 'src/user/user.entity';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Order } from 'src/order/order.entity';
 import { UserException } from 'src/user/user.exception';
@@ -55,16 +56,11 @@ export class NotificationUtils {
 
   async sendNotificationAfterOrderIsPaid(order: Order) {
     // Get all chef role users in the same branch
-    const chefRoleUsers = await this.userRepository.find({
-      where: {
-        role: {
-          name: RoleEnum.Chef,
-        },
-        branch: {
-          id: order.branch.id,
-        },
-      },
-    });
+    const chefRoleUsers = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Chef],
+      order.branch.id,
+    );
 
     const notificationData = chefRoleUsers.map((user) => ({
       message: NotificationMessageCode.ORDER_NEEDS_PROCESSED,
@@ -106,16 +102,11 @@ export class NotificationUtils {
 
   async sendNotificationAfterOrderIsProcessed(order: Order) {
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: RoleEnum.Staff,
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff],
+      order.branch?.id,
+    );
 
     const notificationData = staffs.map((staff) => ({
       message: NotificationMessageCode.ORDER_NEEDS_DELIVERED,
@@ -206,16 +197,11 @@ export class NotificationUtils {
 
   async sendNotificationForAllBranchStaffsWhenFailedBillPrinting(order: Order) {
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 
@@ -255,16 +241,11 @@ export class NotificationUtils {
     order: Order,
   ) {
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 
@@ -304,16 +285,11 @@ export class NotificationUtils {
     order: Order,
   ) {
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 

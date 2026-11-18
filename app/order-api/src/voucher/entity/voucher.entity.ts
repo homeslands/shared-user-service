@@ -118,7 +118,7 @@ export class Voucher extends Base {
   voucherUserGroups: VoucherUserGroup[];
 
   @AutoMap()
-  @ManyToOne(() => User, (user) => user.individualVouchers, { nullable: true })
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'assigned_user_column' })
   assignedUser?: User;
 

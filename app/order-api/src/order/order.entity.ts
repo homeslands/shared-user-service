@@ -71,12 +71,12 @@ export class Order extends Base {
   branch: Branch;
 
   // many to one with user (owner)
-  @ManyToOne(() => User, (user) => user.ownerOrders)
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'owner_column' })
   owner: User;
 
   // many to one with user (approval order)
-  @ManyToOne(() => User, (user) => user.approvalOrders, { nullable: true })
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'approval_by_column' })
   approvalBy?: User;
 

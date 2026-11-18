@@ -7,7 +7,7 @@ import { UserGroup } from 'src/user-group/user-group.entity';
 @Entity('user_group_member_tbl')
 export class UserGroupMember extends Base {
   @AutoMap(() => User)
-  @ManyToOne(() => User, (user) => user.userGroupMembers, {
+  @ManyToOne(() => User, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'user_column' })

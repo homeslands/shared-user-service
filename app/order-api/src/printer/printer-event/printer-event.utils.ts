@@ -1,7 +1,8 @@
+import { findUsersOfBranch } from 'src/notification/user-branch.helper';
 import { Injectable, Logger } from '@nestjs/common';
 import { User } from 'src/user/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { SystemConfigService } from 'src/system-config/system-config.service';
@@ -80,16 +81,11 @@ export class PrinterEventUtils {
     if (!printerJob) return;
 
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 
@@ -155,16 +151,11 @@ export class PrinterEventUtils {
     if (!printerJob) return;
 
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 
@@ -231,16 +222,11 @@ export class PrinterEventUtils {
     if (!printerJob) return;
 
     // Create notification to send to staffs in the same branch
-    const staffs = await this.userRepository.find({
-      where: {
-        role: {
-          name: In([RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager]),
-        },
-        branch: {
-          id: order.branch?.id,
-        },
-      },
-    });
+    const staffs = await findUsersOfBranch(
+      this.userRepository,
+      [RoleEnum.Staff, RoleEnum.Chef, RoleEnum.Manager],
+      order.branch?.id,
+    );
 
     const frontEndUrl = await this.getFrontendUrl();
 
