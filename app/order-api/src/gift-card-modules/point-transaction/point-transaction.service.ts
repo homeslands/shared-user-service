@@ -28,30 +28,11 @@ import { FindAllPointTransactionDto } from './dto/find-all-point-transaction.dto
 import { CreatePointTransactionDto } from './dto/create-point-transaction.dto';
 import {
   PointTransactionGroupBy,
-  PointTransactionObjectTypeEnum,
   PointTransactionTypeEnum,
 } from './entities/point-transaction.enum';
-import { Order } from 'src/order/order.entity';
-import { GiftCard } from '../gift-card/entities/gift-card.entity';
 import { User } from 'src/user/user.entity';
-import { PdfService } from 'src/pdf/pdf.service';
-import { fileToBase64DataUri } from 'src/shared/utils/file.util';
-import {
-  ExportAllPointTransactionDto,
-  ExportAllSystemPointTransactionDto,
-} from './dto/export-all-point-transaction.dto';
-import { AuthException } from 'src/auth/auth.exception';
-import { AuthValidation } from 'src/auth/auth.validation';
-import { CardOrder } from '../card-order/entities/card-order.entity';
 import { SharedPointTransactionService } from 'src/shared/services/shared-point-transaction.service';
 import _ from 'lodash';
-import { SharedExportFileService } from 'src/shared/services/shared-export-file.service';
-import { ExcelConfig } from 'src/shared/interfaces/commons/excel-config.interface';
-import { ExcelUtil } from 'src/shared/utils/excel.util';
-import moment from 'moment';
-import { ExportFilename } from 'src/shared/constants/export-filename.constant';
-import { CurrencyUtil } from 'src/shared/utils/currency.util';
-import { Campaign } from 'src/campaign/entity/campaign.entity';
 
 // Which transactions a read covers (steps 6.9 and 6.10, QD17 + QD-T5).
 // - userId: the transactions of that user, whatever service wrote them. The
@@ -89,23 +70,13 @@ export class PointTransactionService {
   constructor(
     @InjectRepository(PointTransaction)
     private ptRepository: Repository<PointTransaction>,
-    @InjectRepository(CardOrder)
-    private coRepository: Repository<CardOrder>,
-    @InjectRepository(Order)
-    private orderRepository: Repository<Order>,
-    @InjectRepository(GiftCard)
-    private gcRepository: Repository<GiftCard>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
-    @InjectRepository(Campaign)
-    private campaignRepository: Repository<Campaign>,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectMapper()
     private readonly mapper: Mapper,
-    private readonly pdfService: PdfService,
     private readonly sharedPtService: SharedPointTransactionService,
-    private readonly sharedExportFileService: SharedExportFileService,
   ) {}
 
   // Step 6.10: POST /internal/point-transactions/analysis (QD-T5 scope).
@@ -147,242 +118,6 @@ export class PointTransactionService {
       statistics,
     });
     return result;
-  }
-
-  async exportAllSystem(query: ExportAllSystemPointTransactionDto) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(
-      `Export all point transaction req: ${JSON.stringify(query)}`,
-      context,
-    );
-
-    const whereOpts: FindOptionsWhere<PointTransaction> = {};
-
-    if (query.type) {
-      whereOpts.type = query.type;
-    }
-
-    if (query.fromDate && !query.toDate) {
-      whereOpts.createdAt = MoreThan(query.fromDate);
-    }
-
-    if (query.fromDate && query.toDate) {
-      whereOpts.createdAt = Between(query.fromDate, query.toDate);
-    }
-
-    const pts = await this.ptRepository.find({
-      where: whereOpts,
-      relations: ['user'],
-      order: {
-        createdAt: 'ASC',
-      },
-    });
-
-    const filename = ExportFilename.EXPORT_ALL_SYSTEM_POINT_TRANSACTION;
-    const excelConfig = this.buildExcelConfig();
-    const data = this.buildData(pts);
-
-    return await this.sharedExportFileService.exportExcel(
-      filename,
-      excelConfig,
-      data,
-    );
-  }
-
-  private buildExcelConfig() {
-    const excelConfig = new ExcelConfig();
-    const headers = [
-      { header: 'STT', key: 'index', width: ExcelUtil.WIDTH_COL_STT },
-      {
-        header: 'Khách hàng',
-        key: 'customerName',
-        width: ExcelUtil.WIDTH_COL_MEDIUM,
-      },
-      {
-        header: 'Số diện thoại',
-        key: 'phonenumber',
-        width: ExcelUtil.WIDTH_COL_MEDIUM,
-      },
-      {
-        header: 'Loại giao dịch',
-        key: 'type',
-        width: ExcelUtil.WIDTH_COL_CODE,
-      },
-      { header: 'Số xu', key: 'points', width: ExcelUtil.WIDTH_COL_SHORT },
-      { header: 'Mô tả', key: 'desc', width: ExcelUtil.WIDTH_COL_LONG },
-      {
-        header: 'Ngày tạo',
-        key: 'createdAt',
-        width: ExcelUtil.WIDTH_COL_SHORT,
-      },
-    ];
-    excelConfig.headers = headers;
-    return excelConfig;
-  }
-
-  private buildData(data: any[]) {
-    const exportData = data.map((item, index) => ({
-      ...item,
-      index: index + 1,
-      customerName: `${item?.user?.firstName} ${item?.user?.lastName}`,
-      phonenumber: item?.user?.phonenumber,
-      type: item?.type === PointTransactionTypeEnum.IN ? 'Nhận xu' : 'Dùng xu',
-      points: CurrencyUtil.formatCurrency(item?.points),
-      createdAt: item.createdAt
-        ? moment(item.createdAt).format('HH:mm:ss DD/MM/YYYY')
-        : null,
-    }));
-    return exportData;
-  }
-
-  async exportAll(query: ExportAllPointTransactionDto) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(
-      `Export all point transaction req: ${JSON.stringify(query)}`,
-      context,
-    );
-
-    const user = await this.userRepository.findOne({
-      where: {
-        slug: query.userSlug,
-      },
-    });
-    if (!user) throw new AuthException(AuthValidation.USER_NOT_FOUND);
-
-    const { userSlug } = query;
-
-    const whereOpts: FindOptionsWhere<PointTransaction> = {};
-
-    if (userSlug) {
-      whereOpts.user = {
-        slug: userSlug,
-      };
-    }
-
-    if (query.type) {
-      whereOpts.type = query.type;
-    }
-
-    if (query.fromDate && !query.toDate) {
-      whereOpts.createdAt = MoreThan(query.fromDate);
-    }
-
-    if (query.fromDate && query.toDate) {
-      whereOpts.createdAt = Between(query.fromDate, query.toDate);
-    }
-
-    const pts = await this.ptRepository.find({
-      where: whereOpts,
-      relations: ['user'],
-      order: {
-        createdAt: 'ASC',
-      },
-    });
-
-    const totalIn = pts
-      .filter((item) => item.type === PointTransactionTypeEnum.IN)
-      .reduce((prev, cur) => prev + cur.points, 0);
-    const totalOut = pts
-      .filter((item) => item.type === PointTransactionTypeEnum.OUT)
-      .reduce((prev, cur) => prev + cur.points, 0);
-    let totalPoints = 0;
-
-    if (!_.isEmpty(pts)) {
-      const lastItem = pts.at(pts.length - 1);
-      if (lastItem.type === PointTransactionTypeEnum.IN)
-        totalPoints = +lastItem.balance + lastItem.points;
-      else totalPoints = +lastItem.balance - lastItem.points;
-    }
-
-    const logoUri = fileToBase64DataUri('public/images/logo.png', 'image/png');
-    const exportAt = new Date();
-
-    return await this.pdfService.generatePdf(
-      'point-transactions',
-      {
-        logoUri,
-        pts,
-        exportAt,
-        user,
-        query,
-        totalIn,
-        totalOut,
-        totalPoints,
-      },
-      {
-        format: 'A4',
-      },
-    );
-  }
-
-  async export(slug: string) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(`Export point transaction req: ${slug}`, context);
-
-    const pt = await this.ptRepository.findOne({
-      where: {
-        slug,
-      },
-      relations: ['user'],
-    });
-    if (!pt)
-      throw new PointTransactionException(
-        PointTransactionValidation.POINT_TRANSACTION_NOT_FOUND,
-      );
-
-    const ref: Order | GiftCard | CardOrder | Campaign =
-      await this.getObjectRef({
-        objectType: pt.objectType,
-        objectSlug: pt.objectSlug,
-      });
-
-    const logoUri = fileToBase64DataUri('public/images/logo.png', 'image/png');
-
-    return await this.pdfService.generatePdf(
-      'point-transaction',
-      {
-        logoUri,
-        ref,
-        ...pt,
-      },
-      {
-        width: '80mm',
-      },
-    );
-  }
-
-  async getObjectRef(payload: { objectType: string; objectSlug: string }) {
-    let objectRef: Order | GiftCard | CardOrder | Campaign = null;
-
-    switch (payload.objectType) {
-      case PointTransactionObjectTypeEnum.ORDER:
-        objectRef = await this.orderRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      case PointTransactionObjectTypeEnum.GIFT_CARD:
-        objectRef = await this.gcRepository.findOne({
-          where: { slug: payload.objectSlug },
-          relations: ['cardOrder'],
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CARD_ORDER:
-        objectRef = await this.coRepository.findOne({
-          where: { slug: payload.objectSlug },
-          relations: ['payment'],
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CAMPAIGN:
-        objectRef = await this.campaignRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      default:
-        throw new PointTransactionException(
-          PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-        );
-    }
-    return objectRef;
   }
 
   async create(req: CreatePointTransactionDto) {

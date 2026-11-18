@@ -15,9 +15,7 @@ import {
   FindOptionsWhere,
   Repository,
   Between,
-  Not,
   In,
-  Like,
 } from 'typeorm';
 import { AccumulatedPoint } from './entities/accumulated-point.entity';
 import { AccumulatedPointTransactionHistory } from './entities/accumulated-point-transaction-history.entity';
@@ -48,7 +46,6 @@ import {
   IAddPointsDto,
   GetPointHistoryQueryDto,
   PointTransactionHistoryResponseDto,
-  ApplyPointsResponseDto,
 } from './accumulated-point.dto';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
 import { AccumulatedPointException } from './accumulated-point.exception';
@@ -57,16 +54,12 @@ import {
   calculateAccumulatedPoints,
   isCustomer,
   isDefaultCustomer,
-  validatePointsUsage,
 } from './accumulated-point.utils';
 import { User } from 'src/user/user.entity';
-import { Order } from 'src/order/order.entity';
 import { ConfigService } from '@nestjs/config';
+import { legacyTrendOrderRef } from 'src/shared/constants/legacy-order-ref.constant';
 import { SystemConfigService } from 'src/system-config/system-config.service';
 import { SystemConfigKey } from 'src/system-config/system-config.constant';
-import { OrderStatus, legacyTrendOrderRef } from 'src/order/order.constants';
-import { OrderException } from 'src/order/order.exception';
-import { OrderValidation } from 'src/order/order.validation';
 
 const isDuplicateKey = (error: any, index?: string): boolean =>
   (error?.code ?? error?.driverError?.code) === 'ER_DUP_ENTRY' &&
@@ -150,8 +143,6 @@ export class AccumulatedPointService {
     private readonly transactionHistoryRepository: Repository<AccumulatedPointTransactionHistory>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(Order)
-    private readonly orderRepository: Repository<Order>,
     @InjectMapper()
     private readonly mapper: Mapper,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -435,203 +426,6 @@ export class AccumulatedPointService {
   }
 
   /**
-   * Reserve points when apply for order (not actually subtract points)
-   */
-  async reservePointsForOrder(
-    orderSlug: string,
-    pointsToUse: number,
-    createdUserId: string,
-  ): Promise<ApplyPointsResponseDto> {
-    const context = `${AccumulatedPointService.name}.${this.reservePointsForOrder.name}`;
-
-    const createdUser = await this.userRepository.findOne({
-      where: { id: createdUserId },
-    });
-
-    if (!createdUser) {
-      this.logger.error(
-        `Created user for apply accumulated points not found: ${createdUserId}`,
-        context,
-      );
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.USER_NOT_FOUND,
-      );
-    }
-
-    const order = await this.orderRepository.findOne({
-      where: { slug: orderSlug },
-      relations: ['owner.accumulatedPoint', 'owner.role'],
-    });
-
-    if (!order) {
-      this.logger.error(`Order not found: ${orderSlug}`, context);
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.ORDER_NOT_FOUND,
-      );
-    }
-
-    if (order.status !== OrderStatus.PENDING) {
-      this.logger.error(`Order is not pending: ${orderSlug}`, context);
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.ORDER_STATUS_INVALID,
-      );
-    }
-
-    const user = order.owner;
-    if (!user) {
-      this.logger.error(`Order owner not found: ${orderSlug}`, context);
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.ORDER_OWNER_NOT_FOUND,
-      );
-    }
-
-    // Check if user is customer
-    if (!isCustomer(user.role?.name)) {
-      this.logger.log(`User is not customer: ${user.id}`, context);
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.CUSTOMER_ONLY_FEATURE,
-      );
-    }
-
-    // Check if user is default customer
-    if (isDefaultCustomer(user.phonenumber)) {
-      this.logger.warn(
-        `Default customer cannot use points: ${orderSlug}`,
-        context,
-      );
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.DEFAULT_CUSTOMER_NOT_ELIGIBLE,
-      );
-    }
-
-    let accumulatedPoint = user.accumulatedPoint;
-
-    // Create new if not exists
-    if (!accumulatedPoint) {
-      accumulatedPoint = await this.createAccumulatedPointForUser(user);
-    }
-
-    // Check if there is reservation for other order
-    // 1 order can reserve multiple times
-    // If reservation exists, create new reservation then the old one will be deleted
-    // User cannot create 2 orders and reserve at the same time
-    // ... within one service (step 6.4, QD-T3): a reservation held in another
-    // service does not block this one, as in the unique index
-    // ACTIVE_RESERVATION_INDEX, which also stops two requests that both pass
-    // this check.
-    const existingReservationForOtherOrder =
-      await this.transactionHistoryRepository.findOne({
-        where: {
-          objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
-          objectId: Not(order.id),
-          objectSlug: Like(
-            `${serviceOfRef(legacyTrendOrderRef(order.slug))}:%`,
-          ),
-          accumulatedPoint: { id: accumulatedPoint.id },
-          type: AccumulatedPointTransactionType.RESERVE,
-          status: AccumulatedPointTransactionStatus.PENDING,
-        },
-      });
-
-    if (existingReservationForOtherOrder) {
-      this.logger.warn(
-        `Points already reserved for other order: ${existingReservationForOtherOrder.objectSlug}`,
-        context,
-      );
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.POINTS_ALREADY_RESERVED_FOR_OTHER_ORDER,
-      );
-    }
-
-    let oldPointsToUse = 0;
-
-    const existingReservationForThisOrder =
-      await this.transactionHistoryRepository.findOne({
-        where: {
-          objectType: ACCUMULATED_POINT_OBJECT_TYPE_ORDER,
-          objectId: order.id,
-          accumulatedPoint: { id: accumulatedPoint.id },
-          type: AccumulatedPointTransactionType.RESERVE,
-          status: AccumulatedPointTransactionStatus.PENDING,
-        },
-      });
-
-    if (existingReservationForThisOrder) {
-      //get old points to use
-      oldPointsToUse = existingReservationForThisOrder.points;
-    }
-
-    // Validate points usage
-    const validation = validatePointsUsage(
-      pointsToUse,
-      //add old points if existing pending reservation for this order
-      accumulatedPoint.totalPoints + oldPointsToUse,
-      order.subtotal + oldPointsToUse,
-    );
-    if (!validation.isValid) {
-      this.logger.warn(`Invalid points usage: ${validation.error}`, context);
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.INVALID_POINTS_AMOUNT,
-      );
-    }
-
-    if (existingReservationForThisOrder) {
-      //soft delete existing reservation for this order
-      existingReservationForThisOrder.status =
-        AccumulatedPointTransactionStatus.CANCELLED;
-      await this.transactionHistoryRepository.save(
-        existingReservationForThisOrder,
-      );
-    }
-
-    try {
-      await this.createTransactionHistory({
-        accumulatedPoint,
-        orderId: order.id,
-        type: AccumulatedPointTransactionType.RESERVE,
-        points: pointsToUse,
-        lastPoints: accumulatedPoint.totalPoints + oldPointsToUse - pointsToUse,
-        status: AccumulatedPointTransactionStatus.PENDING,
-        createdUserId,
-      });
-
-      // Update accumulated point
-      accumulatedPoint.totalPoints =
-        accumulatedPoint.totalPoints + oldPointsToUse - pointsToUse;
-      await this.accumulatedPointRepository.save(accumulatedPoint);
-
-      const finalAmount = order.subtotal + oldPointsToUse - pointsToUse;
-
-      order.accumulatedPointsToUse = pointsToUse;
-      order.subtotal = finalAmount;
-      await this.orderRepository.save(order);
-
-      this.logger.log(
-        `Reserved ${pointsToUse} points for user ${user.id}, order ${orderSlug}. Current points: ${accumulatedPoint.totalPoints}`,
-        context,
-      );
-
-      return {
-        pointsUsed: pointsToUse,
-        finalAmount,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Error reserving points: ${error.message}`,
-        error.stack,
-        context,
-      );
-      // A reservation refused by the active reservation index keeps its own
-      // code (see createTransactionHistory); anything else is reported as
-      // before.
-      if (error instanceof AccumulatedPointException) throw error;
-      throw new AccumulatedPointException(
-        AccumulatedPointValidation.ERROR_CREATING_TRANSACTION_HISTORY,
-      );
-    }
-  }
-
-  /**
    * Confirm points usage when order is paid successfully
    */
   async confirmPointsUsage(orderId: string): Promise<void> {
@@ -687,34 +481,6 @@ export class AccumulatedPointService {
         AccumulatedPointValidation.ERROR_UPDATING_POINTS,
       );
     }
-  }
-
-  /**
-   * Cancel reservation if exists, refund points if confirmed
-   */
-  async cancelReservation(
-    orderSlug: string,
-    createdUserId: string,
-  ): Promise<void> {
-    const context = `${AccumulatedPointService.name}.${this.handleCancelReservation.name}`;
-
-    const order = await this.orderRepository.findOne({
-      where: { slug: orderSlug },
-    });
-
-    if (!order) {
-      this.logger.log(`Order not found: ${orderSlug}`, context);
-      throw new OrderException(OrderValidation.ORDER_NOT_FOUND);
-    }
-
-    await this.handleCancelReservation(order.id, createdUserId);
-    // Update subtotal and accumulated points to use in order
-    const subtotalBeforeUseAccumulatedPoints =
-      order.subtotal + order.accumulatedPointsToUse;
-    order.accumulatedPointsToUse = 0;
-    order.subtotal = subtotalBeforeUseAccumulatedPoints;
-
-    await this.orderRepository.save(order);
   }
 
   /**
@@ -849,9 +615,12 @@ export class AccumulatedPointService {
     const context = `${AccumulatedPointService.name}.${this.createTransactionHistory.name}`;
 
     try {
-      const order = await this.orderRepository.findOne({
-        where: { id: data.orderId },
-      });
+      // Step 6.15: the wallet no longer maps Order; same row as the findOne it
+      // replaces (soft deleted orders excluded).
+      const [order] = (await this.transactionHistoryRepository.query(
+        'SELECT id_column AS id, slug_column AS slug FROM order_tbl WHERE id_column = ? AND deleted_at_column IS NULL',
+        [data.orderId],
+      )) as { id: string; slug: string }[];
 
       const pointsPercentage = await this.getAccumulatedPointsPercentage();
 

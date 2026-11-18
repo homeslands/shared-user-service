@@ -8,7 +8,6 @@ import { AccumulatedPointInternalController } from './internal/accumulated-point
 import { AccumulatedPointScheduler } from './accumulated-point.scheduler';
 import { AccumulatedPointProfile } from './accumulated-point.mapper';
 import { User } from 'src/user/user.entity';
-import { Order } from 'src/order/order.entity';
 
 @Module({
   imports: [
@@ -16,7 +15,6 @@ import { Order } from 'src/order/order.entity';
       AccumulatedPoint,
       AccumulatedPointTransactionHistory,
       User,
-      Order,
     ]),
   ],
   controllers: [AccumulatedPointController, AccumulatedPointInternalController],
