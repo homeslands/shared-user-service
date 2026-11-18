@@ -8,12 +8,10 @@ import { UserProfile } from './user.mapper';
 import { MailModule } from 'src/mail/mail.module';
 import { UserScheduler } from './user.scheduler';
 import { Role } from 'src/role/role.entity';
-import { Branch } from 'src/branch/branch.entity';
 import { UserUtils } from './user.utils';
 import { SharedModule } from 'src/shared/shared.module';
 import { UserRequirement } from './user-requirement.entity';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
-import { BranchUtils } from 'src/branch/branch.utils';
 import { ZaloOaConnectorModule } from 'src/zalo-oa-connector/zalo-oa-connector.module';
 import { ZaloOaConnectorConfig } from 'src/zalo-oa-connector/entity/zalo-oa-connector.entity';
 import { ZaloOaConnectorHistory } from 'src/zalo-oa-connector/entity/zalo-oa-connector-history.entity';
@@ -28,7 +26,6 @@ import { CampaignModule } from 'src/campaign/campaign.module';
     TypeOrmModule.forFeature([
       User,
       Role,
-      Branch,
       UserRequirement,
       ZaloOaConnectorConfig,
       ZaloOaConnectorHistory,
@@ -51,7 +48,6 @@ import { CampaignModule } from 'src/campaign/campaign.module';
     UserScheduler,
     UserUtils,
     TransactionManagerService,
-    BranchUtils,
     UserBirthdayProducer,
     UserBirthdayConsumer,
   ],

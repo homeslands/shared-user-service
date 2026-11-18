@@ -17,7 +17,6 @@ import { ProductModule } from 'src/product/product.module';
 import { VariantModule } from 'src/variant/variant.module';
 import { TransactionModule } from 'src/transaction/transaction.module';
 import { MenuModule } from 'src/menu/menu.module';
-import { BranchModule } from 'src/branch/branch.module';
 import { AppSubscriber } from './app.subscriber';
 import { TableModule } from 'src/table/table.module';
 import { MenuItemModule } from 'src/menu-item/menu-item.module';
@@ -138,7 +137,6 @@ import { TestModule } from 'src/test/test.module';
     VariantModule,
     MenuModule,
     MenuItemModule,
-    BranchModule,
     TransactionModule,
     LoggerModule,
     TableModule,
