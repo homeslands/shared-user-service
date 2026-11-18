@@ -6,19 +6,23 @@ import { Logger } from 'winston';
 import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
-import { Order } from 'src/order/order.entity';
 import { User } from 'src/user/user.entity';
 import { CreatePointTransactionDto } from 'src/gift-card-modules/point-transaction/dto/create-point-transaction.dto';
 import { PointTransaction } from 'src/gift-card-modules/point-transaction/entities/point-transaction.entity';
-import { GiftCard } from 'src/gift-card-modules/gift-card/entities/gift-card.entity';
 import {
   PointTransactionObjectTypeEnum,
   PointTransactionTypeEnum,
 } from 'src/gift-card-modules/point-transaction/entities/point-transaction.enum';
 import { PointTransactionValidation } from 'src/gift-card-modules/point-transaction/point-transaction.validation';
 import { PointTransactionException } from 'src/gift-card-modules/point-transaction/point-transaction.exception';
-import { CardOrder } from 'src/gift-card-modules/card-order/entities/card-order.entity';
-import { Campaign } from 'src/campaign/entity/campaign.entity';
+
+// Table of each object type a point transaction can point to.
+const OBJECT_TABLES: Record<string, string> = {
+  [PointTransactionObjectTypeEnum.ORDER]: 'order_tbl',
+  [PointTransactionObjectTypeEnum.GIFT_CARD]: 'gift_card_tbl',
+  [PointTransactionObjectTypeEnum.CARD_ORDER]: 'card_order_tbl',
+  [PointTransactionObjectTypeEnum.CAMPAIGN]: 'campaign_tbl',
+};
 
 @Injectable()
 export class SharedPointTransactionService {
@@ -26,16 +30,8 @@ export class SharedPointTransactionService {
    *
    */
   constructor(
-    @InjectRepository(Order)
-    private orderRepository: Repository<Order>,
-    @InjectRepository(GiftCard)
-    private gcRepository: Repository<GiftCard>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
-    @InjectRepository(CardOrder)
-    private coRepository: Repository<CardOrder>,
-    @InjectRepository(Campaign)
-    private campaignRepository: Repository<Campaign>,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectMapper()
@@ -74,34 +70,19 @@ export class SharedPointTransactionService {
       );
     }
 
-    let objectRef: Order | GiftCard | CardOrder | Campaign = null;
-
-    switch (payload.objectType) {
-      case PointTransactionObjectTypeEnum.ORDER:
-        objectRef = await this.orderRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      case PointTransactionObjectTypeEnum.GIFT_CARD:
-        objectRef = await this.gcRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CARD_ORDER:
-        objectRef = await this.coRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CAMPAIGN:
-        objectRef = await this.campaignRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      default:
-        throw new PointTransactionException(
-          PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-        );
+    // Step 6.15: the object is only needed for its id, read from its table by
+    // slug (same rows as the findOne of each entity, soft deleted excluded)
+    // instead of the entities of the modules removed in step 6.17.
+    const table = OBJECT_TABLES[payload.objectType];
+    if (!table) {
+      throw new PointTransactionException(
+        PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
+      );
     }
+    const [objectRef] = (await this.userRepository.query(
+      `SELECT id_column AS id FROM ${table} WHERE slug_column = ? AND deleted_at_column IS NULL LIMIT 1`,
+      [payload.objectSlug],
+    )) as { id: string }[];
 
     if (!objectRef)
       throw new PointTransactionException(
