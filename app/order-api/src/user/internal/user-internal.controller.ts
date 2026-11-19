@@ -17,15 +17,19 @@ import {
 import {
   INTERNAL_BATCH_LOOKUP_MAX,
   INTERNAL_LIST_RECENT_DEFAULT_LIMIT,
+  INTERNAL_SEARCH_BY_BIRTHDAY_MAX,
   INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
 } from 'src/common/constants/internal-api.constant';
 import { UserService } from '../user.service';
+import { BirthdayProducerRun, UserScheduler } from '../user.scheduler';
+import { DobFilterType } from '../user.constant';
 import {
   BatchLookupUserRequestDto,
   CreateInternalUserRequestDto,
   ImportInternalUserRequestDto,
   ListRecentUserRequestDto,
   LookupUserRequestDto,
+  SearchByBirthdayRequestDto,
   SearchByPhonenumberRequestDto,
   ToggleActiveUserRequestDto,
 } from './user-internal.dto';
@@ -51,7 +55,10 @@ interface UpdateIdentityRequest {
 @UseGuards(InternalApiGuard)
 @Controller('internal/users')
 export class UserInternalController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly userScheduler: UserScheduler,
+  ) {}
 
   @Public()
   @Post('lookup')
@@ -109,6 +116,33 @@ export class UserInternalController {
       body.phonenumber,
       body.limit ?? INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
     );
+  }
+
+  // Buoc 8.1 - id cua moi nguoi co ngay sinh (bo qua nam) trong khoang. Cung
+  // luat voi search-by-phonenumber: chi de LOC, vuot tran
+  // (INTERNAL_SEARCH_BY_BIRTHDAY_MAX) => 400 ma 137008, khong cat bot.
+  @Public()
+  @Post('by-birthday')
+  async searchByBirthday(
+    @Body(new ValidationPipe({ transform: true }))
+    body: SearchByBirthdayRequestDto,
+  ): Promise<string[]> {
+    return this.userService.searchIdsByBirthday(
+      body.type ?? DobFilterType.DAY_MONTH,
+      body.from,
+      body.to,
+      body.limit ?? INTERNAL_SEARCH_BY_BIRTHDAY_MAX,
+    );
+  }
+
+  // Buoc 8.1 (QD13) - chay producer sinh nhat ngay, nhu cron 17h. Service
+  // tieu thu (trend) goi tu route POST /user/birthday/trigger cua no: tu buoc
+  // nay scheduler sinh nhat chi con o day. Tra ket qua cua luot chay;
+  // `enabled: false` = USER_BIRTHDAY_QUEUE_PREFIX chua dat, khong day gi.
+  @Public()
+  @Post('birthday/trigger')
+  async triggerBirthday(): Promise<BirthdayProducerRun> {
+    return this.userScheduler.BirthdayStrategyScheduler();
   }
 
   // Duong DONG BO USER CHINH giua cac service (QD19 + QD21): luoi nhanh 10

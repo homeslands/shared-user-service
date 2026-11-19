@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   Matches,
+  IsIn,
   IsInt,
   Min,
   Max,
@@ -15,8 +16,10 @@ import {
 } from 'class-validator';
 import {
   INTERNAL_LIST_RECENT_MAX_LIMIT,
+  INTERNAL_SEARCH_BY_BIRTHDAY_MAX,
   INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
 } from 'src/common/constants/internal-api.constant';
+import { DobFilterType } from '../user.constant';
 
 // DTO RIENG cho POST /internal/users - co tinh KHONG dung lai
 // CreateUserRequestDto cua route client-facing POST /user. Hai ly do:
@@ -203,6 +206,32 @@ export class SearchByPhonenumberRequestDto {
   @IsInt()
   @Min(1)
   @Max(INTERNAL_SEARCH_BY_PHONENUMBER_MAX)
+  limit?: number;
+}
+
+// Buoc 8.1 - loc theo ngay sinh, bo qua nam. `from` / `to` theo `type`:
+// `day_month` => "DD/MM", `day` => "1".."31", `month` => "1".."12". Can it
+// nhat mot can; from > to la khoang vat qua cuoi nam (25/12 -> 05/01).
+export class SearchByBirthdayRequestDto {
+  @IsOptional()
+  @IsIn(Object.values(DobFilterType), {
+    message: `type must be one of ${Object.values(DobFilterType).join(', ')}`,
+  })
+  type?: DobFilterType;
+
+  @IsOptional()
+  @IsString({ message: 'from must be a string' })
+  from?: string;
+
+  @IsOptional()
+  @IsString({ message: 'to must be a string' })
+  to?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(INTERNAL_SEARCH_BY_BIRTHDAY_MAX)
   limit?: number;
 }
 
