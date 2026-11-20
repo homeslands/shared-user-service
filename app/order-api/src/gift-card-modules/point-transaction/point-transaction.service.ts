@@ -1,10 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PointTransaction } from './entities/point-transaction.entity';
 import {
   Between,
   FindOptionsWhere,
-  IsNull,
   Like,
   MoreThan,
   Raw,
@@ -22,66 +21,67 @@ import {
 } from './dto/point-transaction-response.dto';
 import { createSortOptions } from 'src/shared/utils/obj.util';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
-import { PointTransactionException } from './point-transaction.exception';
-import { PointTransactionValidation } from './point-transaction.validation';
 import { FindAllPointTransactionDto } from './dto/find-all-point-transaction.dto';
-import { CreatePointTransactionDto } from './dto/create-point-transaction.dto';
 import {
   PointTransactionGroupBy,
-  PointTransactionObjectTypeEnum,
   PointTransactionTypeEnum,
 } from './entities/point-transaction.enum';
-import { Order } from 'src/order/order.entity';
-import { GiftCard } from '../gift-card/entities/gift-card.entity';
 import { User } from 'src/user/user.entity';
-import { PdfService } from 'src/pdf/pdf.service';
-import { fileToBase64DataUri } from 'src/shared/utils/file.util';
-import {
-  ExportAllPointTransactionDto,
-  ExportAllSystemPointTransactionDto,
-} from './dto/export-all-point-transaction.dto';
-import { AuthException } from 'src/auth/auth.exception';
-import { AuthValidation } from 'src/auth/auth.validation';
-import { CardOrder } from '../card-order/entities/card-order.entity';
-import { SharedPointTransactionService } from 'src/shared/services/shared-point-transaction.service';
 import _ from 'lodash';
-import { SharedExportFileService } from 'src/shared/services/shared-export-file.service';
-import { ExcelConfig } from 'src/shared/interfaces/commons/excel-config.interface';
-import { ExcelUtil } from 'src/shared/utils/excel.util';
-import moment from 'moment';
-import { ExportFilename } from 'src/shared/constants/export-filename.constant';
-import { CurrencyUtil } from 'src/shared/utils/currency.util';
-import { Campaign } from 'src/campaign/entity/campaign.entity';
+
+// Which transactions a read covers (steps 6.9 and 6.10, QD17 + QD-T5).
+// - userId: the transactions of that user, whatever service wrote them. The
+//   self view always sets it, from the token.
+// - service: the transactions written under that service's keys
+//   ('<service>:...', the step 6.3 key). The view on behalf of a service of
+//   the whole system sets it, from x-internal-service: the soft reference of a
+//   row (objectSlug, objectType) only means something to the service that
+//   wrote it. A row without key (mono copy, before the step 6.12 backfill
+//   gives it one) belongs to no service and only shows in a per-user read.
+// Neither: every transaction (only the client analysis route kept until 6.10
+// did that).
+export interface PointTransactionScope {
+  userId?: string;
+  service?: string;
+}
+
+// The service of a row: the prefix of its key, null for a row without key.
+export const serviceOfTransactionKey = (
+  key: string | null | undefined,
+): string | null => (key && key.includes(':') ? key.split(':')[0] : null);
+
+// LIKE pattern of the keys of a service: the service name is a header value,
+// so its wildcards are escaped (MySQL's default escape character).
+const keysOfService = (service: string): string =>
+  `${service.replace(/[\\%_]/g, '\\$&')}:%`;
+
+// Step 6.10: the most rows /internal/point-transactions/export answers with.
+// Above it the caller is told to narrow the filter instead of getting a
+// truncated file (the old client route built the whole file in one go).
+export const POINT_TRANSACTION_EXPORT_MAX_ROWS = 20000;
 
 @Injectable()
 export class PointTransactionService {
   constructor(
     @InjectRepository(PointTransaction)
     private ptRepository: Repository<PointTransaction>,
-    @InjectRepository(CardOrder)
-    private coRepository: Repository<CardOrder>,
-    @InjectRepository(Order)
-    private orderRepository: Repository<Order>,
-    @InjectRepository(GiftCard)
-    private gcRepository: Repository<GiftCard>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
-    @InjectRepository(Campaign)
-    private campaignRepository: Repository<Campaign>,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectMapper()
     private readonly mapper: Mapper,
-    private readonly pdfService: PdfService,
-    private readonly sharedPtService: SharedPointTransactionService,
-    private readonly sharedExportFileService: SharedExportFileService,
   ) {}
 
-  async analyze(req: FindAllPointTransactionDto) {
+  // Step 6.10: POST /internal/point-transactions/analysis (QD-T5 scope).
+  async analyze(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope = {},
+  ) {
     const { sort } = req;
 
     const whereOpts: FindOptionsWhere<PointTransaction> =
-      this.buildWhereOptions(req);
+      this.buildWhereOptions(req, scope);
 
     const sortOpts = createSortOptions<PointTransaction>(sort);
 
@@ -92,7 +92,7 @@ export class PointTransactionService {
         relations: ['user'],
         select: ['points', 'type'],
       }),
-      this.getAnalysisStatistics(req),
+      this.getAnalysisStatistics(req, scope),
     ]);
 
     const totalEarned = pts
@@ -114,367 +114,24 @@ export class PointTransactionService {
     return result;
   }
 
-  async exportAllSystem(query: ExportAllSystemPointTransactionDto) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(
-      `Export all point transaction req: ${JSON.stringify(query)}`,
-      context,
-    );
-
-    const whereOpts: FindOptionsWhere<PointTransaction> = {};
-
-    if (query.type) {
-      whereOpts.type = query.type;
-    }
-
-    if (query.fromDate && !query.toDate) {
-      whereOpts.createdAt = MoreThan(query.fromDate);
-    }
-
-    if (query.fromDate && query.toDate) {
-      whereOpts.createdAt = Between(query.fromDate, query.toDate);
-    }
-
-    const pts = await this.ptRepository.find({
-      where: whereOpts,
-      relations: ['user'],
-      order: {
-        createdAt: 'ASC',
-      },
-    });
-
-    const filename = ExportFilename.EXPORT_ALL_SYSTEM_POINT_TRANSACTION;
-    const excelConfig = this.buildExcelConfig();
-    const data = this.buildData(pts);
-
-    return await this.sharedExportFileService.exportExcel(
-      filename,
-      excelConfig,
-      data,
-    );
-  }
-
-  private buildExcelConfig() {
-    const excelConfig = new ExcelConfig();
-    const headers = [
-      { header: 'STT', key: 'index', width: ExcelUtil.WIDTH_COL_STT },
-      {
-        header: 'Khách hàng',
-        key: 'customerName',
-        width: ExcelUtil.WIDTH_COL_MEDIUM,
-      },
-      {
-        header: 'Số diện thoại',
-        key: 'phonenumber',
-        width: ExcelUtil.WIDTH_COL_MEDIUM,
-      },
-      {
-        header: 'Loại giao dịch',
-        key: 'type',
-        width: ExcelUtil.WIDTH_COL_CODE,
-      },
-      { header: 'Số xu', key: 'points', width: ExcelUtil.WIDTH_COL_SHORT },
-      { header: 'Mô tả', key: 'desc', width: ExcelUtil.WIDTH_COL_LONG },
-      {
-        header: 'Ngày tạo',
-        key: 'createdAt',
-        width: ExcelUtil.WIDTH_COL_SHORT,
-      },
-    ];
-    excelConfig.headers = headers;
-    return excelConfig;
-  }
-
-  private buildData(data: any[]) {
-    const exportData = data.map((item, index) => ({
-      ...item,
-      index: index + 1,
-      customerName: `${item?.user?.firstName} ${item?.user?.lastName}`,
-      phonenumber: item?.user?.phonenumber,
-      type: item?.type === PointTransactionTypeEnum.IN ? 'Nhận xu' : 'Dùng xu',
-      points: CurrencyUtil.formatCurrency(item?.points),
-      createdAt: item.createdAt
-        ? moment(item.createdAt).format('HH:mm:ss DD/MM/YYYY')
-        : null,
-    }));
-    return exportData;
-  }
-
-  async exportAll(query: ExportAllPointTransactionDto) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(
-      `Export all point transaction req: ${JSON.stringify(query)}`,
-      context,
-    );
-
-    const user = await this.userRepository.findOne({
-      where: {
-        slug: query.userSlug,
-      },
-    });
-    if (!user) throw new AuthException(AuthValidation.USER_NOT_FOUND);
-
-    const { userSlug } = query;
-
-    const whereOpts: FindOptionsWhere<PointTransaction> = {};
-
-    if (userSlug) {
-      whereOpts.user = {
-        slug: userSlug,
-      };
-    }
-
-    if (query.type) {
-      whereOpts.type = query.type;
-    }
-
-    if (query.fromDate && !query.toDate) {
-      whereOpts.createdAt = MoreThan(query.fromDate);
-    }
-
-    if (query.fromDate && query.toDate) {
-      whereOpts.createdAt = Between(query.fromDate, query.toDate);
-    }
-
-    const pts = await this.ptRepository.find({
-      where: whereOpts,
-      relations: ['user'],
-      order: {
-        createdAt: 'ASC',
-      },
-    });
-
-    const totalIn = pts
-      .filter((item) => item.type === PointTransactionTypeEnum.IN)
-      .reduce((prev, cur) => prev + cur.points, 0);
-    const totalOut = pts
-      .filter((item) => item.type === PointTransactionTypeEnum.OUT)
-      .reduce((prev, cur) => prev + cur.points, 0);
-    let totalPoints = 0;
-
-    if (!_.isEmpty(pts)) {
-      const lastItem = pts.at(pts.length - 1);
-      if (lastItem.type === PointTransactionTypeEnum.IN)
-        totalPoints = +lastItem.balance + lastItem.points;
-      else totalPoints = +lastItem.balance - lastItem.points;
-    }
-
-    const logoUri = fileToBase64DataUri('public/images/logo.png', 'image/png');
-    const exportAt = new Date();
-
-    return await this.pdfService.generatePdf(
-      'point-transactions',
-      {
-        logoUri,
-        pts,
-        exportAt,
-        user,
-        query,
-        totalIn,
-        totalOut,
-        totalPoints,
-      },
-      {
-        format: 'A4',
-      },
-    );
-  }
-
-  async export(slug: string) {
-    const context = `${PointTransactionService.name}.${this.export.name}`;
-    this.logger.log(`Export point transaction req: ${slug}`, context);
-
-    const pt = await this.ptRepository.findOne({
-      where: {
-        slug,
-      },
-      relations: ['user'],
-    });
-    if (!pt)
-      throw new PointTransactionException(
-        PointTransactionValidation.POINT_TRANSACTION_NOT_FOUND,
-      );
-
-    const ref: Order | GiftCard | CardOrder | Campaign =
-      await this.getObjectRef({
-        objectType: pt.objectType,
-        objectSlug: pt.objectSlug,
-      });
-
-    const logoUri = fileToBase64DataUri('public/images/logo.png', 'image/png');
-
-    return await this.pdfService.generatePdf(
-      'point-transaction',
-      {
-        logoUri,
-        ref,
-        ...pt,
-      },
-      {
-        width: '80mm',
-      },
-    );
-  }
-
-  async getObjectRef(payload: { objectType: string; objectSlug: string }) {
-    let objectRef: Order | GiftCard | CardOrder | Campaign = null;
-
-    switch (payload.objectType) {
-      case PointTransactionObjectTypeEnum.ORDER:
-        objectRef = await this.orderRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      case PointTransactionObjectTypeEnum.GIFT_CARD:
-        objectRef = await this.gcRepository.findOne({
-          where: { slug: payload.objectSlug },
-          relations: ['cardOrder'],
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CARD_ORDER:
-        objectRef = await this.coRepository.findOne({
-          where: { slug: payload.objectSlug },
-          relations: ['payment'],
-        });
-        break;
-      case PointTransactionObjectTypeEnum.CAMPAIGN:
-        objectRef = await this.campaignRepository.findOne({
-          where: { slug: payload.objectSlug },
-        });
-        break;
-      default:
-        throw new PointTransactionException(
-          PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-        );
-    }
-    return objectRef;
-  }
-
-  async create(req: CreatePointTransactionDto) {
-    const pt = await this.sharedPtService.create(req);
-    return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
-    // const context = `${PointTransaction.name}.${this.create.name}`;
-    // this.logger.log(
-    //   `Create point transaction req; ${JSON.stringify(req)}`,
-    //   context,
-    // );
-
-    // const payload = this.mapper.map(
-    //   req,
-    //   CreatePointTransactionDto,
-    //   PointTransaction,
-    // );
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.IN &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.ORDER
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_IN_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.OUT &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.GIFT_CARD
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_OUT_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // if (
-    //   payload.type === PointTransactionTypeEnum.OUT &&
-    //   payload.objectType === PointTransactionObjectTypeEnum.CARD_ORDER
-    // ) {
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.INVALID_OUT_CARD_ORDER_TRANSACTION,
-    //   );
-    // }
-
-    // let objectRef: Order | GiftCard | CardOrder = null;
-
-    // switch (payload.objectType) {
-    //   case PointTransactionObjectTypeEnum.ORDER:
-    //     objectRef = await this.orderRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   case PointTransactionObjectTypeEnum.GIFT_CARD:
-    //     objectRef = await this.gcRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   case PointTransactionObjectTypeEnum.CARD_ORDER:
-    //     objectRef = await this.coRepository.findOne({
-    //       where: { slug: payload.objectSlug },
-    //     });
-    //     break;
-    //   default:
-    //     throw new PointTransactionException(
-    //       PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-    //     );
-    // }
-
-    // if (!objectRef)
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.OBJECT_TYPE_NOT_FOUND,
-    //   );
-
-    // const user = await this.userRepository.findOne({
-    //   where: {
-    //     slug: payload.userSlug,
-    //   },
-    // });
-
-    // if (!user)
-    //   throw new PointTransactionException(
-    //     PointTransactionValidation.USER_NOT_FOUND,
-    //   );
-
-    // Object.assign(payload, {
-    //   objectId: objectRef.id,
-    //   userId: user.id,
-    //   user: user,
-    // } as Partial<PointTransaction>);
-
-    // const pt = await this.transactionService.execute<PointTransaction>(
-    //   async (manager) => {
-    //     return manager.save(payload);
-    //   },
-    //   (res) =>
-    //     this.logger.log(
-    //       `Point transaction created: ${JSON.stringify(res)}`,
-    //       context,
-    //     ),
-    //   (err) => {
-    //     this.logger.error(
-    //       `Error when creating point transaction: ${err.message}`,
-    //       err.stack,
-    //       context,
-    //     );
-    //     throw new PointTransactionException(
-    //       PointTransactionValidation.ERROR_WHEN_CREATE_POINT_TRANSACTION,
-    //     );
-    //   },
-    // );
-    // return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
-  }
-
+  // scope.userId (step 6.9) is the base of the user filter and is spread into
+  // both branches of the k search below, so k narrows the owner's rows and can
+  // never replace the filter (the mono copy assigned the k branches over the
+  // user slug filter). scope.service (step 6.10) filters on the key prefix.
   private buildWhereOptions(
     req: FindAllPointTransactionDto,
+    scope: PointTransactionScope = {},
   ): FindOptionsWhere<PointTransaction> {
-    const { userSlug } = req;
-
+    const { userId, service } = scope;
     const whereOpts: FindOptionsWhere<PointTransaction> = {};
 
-    let userWhere: FindOptionsWhere<User> | FindOptionsWhere<User>[] = {};
-
-    if (userSlug) {
-      whereOpts.user = {
-        slug: userSlug,
-      };
+    if (service) {
+      whereOpts.externalTransactionId = Like(keysOfService(service));
     }
+
+    let userWhere: FindOptionsWhere<User> | FindOptionsWhere<User>[] = userId
+      ? { id: userId }
+      : {};
 
     if (req.type) {
       whereOpts.type = req.type;
@@ -532,7 +189,9 @@ export class PointTransactionService {
   // Transaction counts bucketed by time type, using the same filters as findAll
   private async getStatistics(
     req: FindAllPointTransactionDto,
+    scope: PointTransactionScope = {},
   ): Promise<PointTransactionStatisticItemDto[]> {
+    const { userId, service } = scope;
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
     const qb = this.ptRepository
@@ -545,8 +204,14 @@ export class PointTransactionService {
       .addGroupBy('pt.type_column')
       .orderBy(groupByExpr, 'ASC');
 
-    if (req.userSlug) {
-      qb.andWhere('user.slug_column = :userSlug', { userSlug: req.userSlug });
+    if (userId) {
+      qb.andWhere('user.id_column = :userId', { userId });
+    }
+
+    if (service) {
+      qb.andWhere('pt.external_transaction_id_column LIKE :keys', {
+        keys: keysOfService(service),
+      });
     }
 
     if (req.type) {
@@ -588,7 +253,9 @@ export class PointTransactionService {
   // Points earned/spent and transaction counts bucketed by time, for the analysis endpoint
   private async getAnalysisStatistics(
     req: FindAllPointTransactionDto,
+    scope: PointTransactionScope = {},
   ): Promise<AnalysisPointTransactionStatisticItemDto[]> {
+    const { userId, service } = scope;
     const groupByExpr = this.buildGroupByExpr(req.groupBy);
 
     const qb = this.ptRepository
@@ -611,8 +278,14 @@ export class PointTransactionService {
       .groupBy(groupByExpr)
       .orderBy(groupByExpr, 'ASC');
 
-    if (req.userSlug) {
-      qb.andWhere('user.slug_column = :userSlug', { userSlug: req.userSlug });
+    if (userId) {
+      qb.andWhere('user.id_column = :userId', { userId });
+    }
+
+    if (service) {
+      qb.andWhere('pt.external_transaction_id_column LIKE :keys', {
+        keys: keysOfService(service),
+      });
     }
 
     if (req.type) {
@@ -653,17 +326,39 @@ export class PointTransactionService {
     }));
   }
 
-  async findAll(req: FindAllPointTransactionDto) {
-    const context = `${PointTransactionService.name}.${this.findAll.name}`;
+  // Step 6.9 (QD17): GET /point-transaction, the self view. userId is the one
+  // of the token and is required: the list and the statistics only ever read
+  // the transactions of that user.
+  async findAll(req: FindAllPointTransactionDto, userId: string) {
+    return this.findPage(req, { userId });
+  }
+
+  // Step 6.10 (QD17 + QD-T5): POST /internal/point-transactions/query, the
+  // view on behalf of a calling service, which checked the role before. The
+  // same page as the self view, and each row also carries the service that
+  // wrote it, so the caller only opens the soft reference of its own rows.
+  async findPageForService(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope,
+  ) {
+    return this.findPage(req, scope, true);
+  }
+
+  private async findPage(
+    req: FindAllPointTransactionDto,
+    scope: PointTransactionScope,
+    withService = false,
+  ) {
+    const context = `${PointTransactionService.name}.${this.findPage.name}`;
     this.logger.log(
-      `Find all point transaction: ${JSON.stringify(req)}`,
+      `Find point transactions of ${JSON.stringify(scope)}: ${JSON.stringify(req)}`,
       context,
     );
 
     const { page, size, sort } = req;
 
     const whereOpts: FindOptionsWhere<PointTransaction> =
-      this.buildWhereOptions(req);
+      this.buildWhereOptions(req, scope);
 
     const sortOpts = createSortOptions<PointTransaction>(sort);
 
@@ -675,13 +370,19 @@ export class PointTransactionService {
         skip: (page - 1) * size,
         relations: ['user'],
       }),
-      this.getStatistics(req),
+      this.getStatistics(req, scope),
     ]);
-    const cardsResponse = this.mapper.mapArray(
+    const mapped = this.mapper.mapArray(
       pts,
       PointTransaction,
       PointTransactionResponseDto,
     );
+    const cardsResponse = withService
+      ? mapped.map((item, i) => ({
+          ...item,
+          service: serviceOfTransactionKey(pts[i].externalTransactionId),
+        }))
+      : mapped;
     // Calculate total pages
     const totalPages = Math.ceil(total / size);
     // Determine hasNext and hasPrevious
@@ -702,20 +403,58 @@ export class PointTransactionService {
     };
   }
 
-  async findOne(slug: string) {
-    const context = `${PointTransactionService.name}.${this.findOne.name}`;
-    this.logger.log(`Find point transaction: ${JSON.stringify(slug)}`, context);
+  // Step 6.10: POST /internal/point-transactions/export. The rows of the old
+  // client exports (/export of a user, /export/system, /:slug/export of one
+  // transaction), as data: the calling service builds its spreadsheet or its
+  // receipt, as only it can resolve the soft reference (order, gift card,
+  // campaign) of its own rows. Oldest first, like the old spreadsheets. Above
+  // POINT_TRANSACTION_EXPORT_MAX_ROWS the request is refused, not truncated.
+  async exportRows(
+    filter: {
+      slug?: string;
+      type?: string;
+      fromDate?: Date;
+      toDate?: Date;
+    },
+    scope: PointTransactionScope,
+  ) {
+    const context = `${PointTransactionService.name}.${this.exportRows.name}`;
+    const where: FindOptionsWhere<PointTransaction> = {};
+    if (scope.userId) where.user = { id: scope.userId };
+    if (scope.service) {
+      where.externalTransactionId = Like(keysOfService(scope.service));
+    }
+    if (filter.slug) where.slug = filter.slug;
+    if (filter.type) where.type = filter.type;
+    if (filter.fromDate && !filter.toDate) {
+      where.createdAt = MoreThan(filter.fromDate);
+    }
+    if (filter.fromDate && filter.toDate) {
+      where.createdAt = Between(filter.fromDate, filter.toDate);
+    }
 
-    const pt = await this.ptRepository.findOne({
-      where: {
-        slug: slug ?? IsNull(),
-      },
-      relations: ['user'],
-    });
-    if (!pt)
-      throw new PointTransactionException(
-        PointTransactionValidation.POINT_TRANSACTION_NOT_FOUND,
+    const total = await this.ptRepository.count({ where });
+    this.logger.log(
+      `Export point transactions of ${JSON.stringify(scope)} ${JSON.stringify(filter)}: ${total} row(s)`,
+      context,
+    );
+    if (total > POINT_TRANSACTION_EXPORT_MAX_ROWS) {
+      throw new BadRequestException(
+        `${total} point transactions match, more than the ${POINT_TRANSACTION_EXPORT_MAX_ROWS} an export answers with: narrow the filter (dates, type, user)`,
       );
-    return this.mapper.map(pt, PointTransaction, PointTransactionResponseDto);
+    }
+
+    const pts = await this.ptRepository.find({
+      where,
+      relations: ['user'],
+      order: { createdAt: 'ASC' },
+    });
+    const items = this.mapper
+      .mapArray(pts, PointTransaction, PointTransactionResponseDto)
+      .map((item, i) => ({
+        ...item,
+        service: serviceOfTransactionKey(pts[i].externalTransactionId),
+      }));
+    return { items, total };
   }
 }

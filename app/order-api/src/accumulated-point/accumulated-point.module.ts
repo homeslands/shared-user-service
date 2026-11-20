@@ -4,9 +4,10 @@ import { AccumulatedPoint } from './entities/accumulated-point.entity';
 import { AccumulatedPointTransactionHistory } from './entities/accumulated-point-transaction-history.entity';
 import { AccumulatedPointService } from './accumulated-point.service';
 import { AccumulatedPointController } from './accumulated-point.controller';
+import { AccumulatedPointInternalController } from './internal/accumulated-point-internal.controller';
+import { AccumulatedPointScheduler } from './accumulated-point.scheduler';
 import { AccumulatedPointProfile } from './accumulated-point.mapper';
 import { User } from 'src/user/user.entity';
-import { Order } from 'src/order/order.entity';
 
 @Module({
   imports: [
@@ -14,11 +15,14 @@ import { Order } from 'src/order/order.entity';
       AccumulatedPoint,
       AccumulatedPointTransactionHistory,
       User,
-      Order,
     ]),
   ],
-  controllers: [AccumulatedPointController],
-  providers: [AccumulatedPointService, AccumulatedPointProfile],
+  controllers: [AccumulatedPointController, AccumulatedPointInternalController],
+  providers: [
+    AccumulatedPointService,
+    AccumulatedPointProfile,
+    AccumulatedPointScheduler,
+  ],
   exports: [AccumulatedPointService],
 })
 export class AccumulatedPointModule {}

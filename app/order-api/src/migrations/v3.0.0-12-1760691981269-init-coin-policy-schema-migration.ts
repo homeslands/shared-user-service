@@ -1,5 +1,7 @@
-import { CoinPolicyConstanst } from 'src/gift-card-modules/coin-policy/coin-policy.constants';
-import { CoinPolicyKeyEnum } from 'src/gift-card-modules/coin-policy/coin-policy.enum';
+// Step 6.17: src/gift-card-modules/coin-policy/ was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+const CoinPolicyConstanst = { DEFAULT_MAX_BALANCE_VALUE: 0 } as const;
+const CoinPolicyKeyEnum = { MAX_BALANCE: 'MAX_BALANCE' } as const;
 import { getRandomString } from 'src/helper';
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';

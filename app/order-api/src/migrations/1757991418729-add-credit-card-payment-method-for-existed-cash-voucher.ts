@@ -1,6 +1,13 @@
 import { getRandomString } from 'src/helper';
 import { v4 as uuidv4 } from 'uuid';
-import { PaymentMethod } from 'src/payment/payment.constants';
+// Step 6.17: src/payment/payment.constants.ts was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+const PaymentMethod = {
+  BANK_TRANSFER: 'bank-transfer',
+  CASH: 'cash',
+  POINT: 'point',
+  CREDIT_CARD: 'credit-card',
+} as const;
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddCreditCardPaymentMethodForExistedCashVoucher1757991418729

@@ -16,7 +16,6 @@ import {
   INVALID_PHONENUMBER,
 } from './auth.validation';
 import { AutoMap } from '@automapper/classes';
-import { BranchResponseDto } from 'src/branch/branch.dto';
 import { RoleResponseDto } from 'src/role/role.dto';
 import { VerificationMethod } from './auth.constants';
 import { UserRequirementResponseDto } from 'src/user/user.dto';
@@ -228,10 +227,6 @@ export class UpdateAuthProfileRequestDto {
   @ApiProperty({ example: 'Jl. Raya' })
   @AutoMap()
   readonly address: string;
-
-  @ApiProperty({ example: 'XOT7hr58Q' })
-  @AutoMap()
-  readonly branch: string;
 }
 
 export class AuthProfileResponseDto {
@@ -269,10 +264,6 @@ export class AuthProfileResponseDto {
   @AutoMap()
   @ApiProperty()
   readonly image: string;
-
-  @AutoMap(() => BranchResponseDto)
-  @ApiProperty()
-  readonly branch: BranchResponseDto;
 
   @AutoMap(() => RoleResponseDto)
   @ApiProperty()

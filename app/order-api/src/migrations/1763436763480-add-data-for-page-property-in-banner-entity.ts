@@ -1,4 +1,6 @@
-import { BannerPage } from 'src/banner/banner.constants';
+// Step 6.17: src/banner/banner.constants.ts was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+const BannerPage = { HOME: 'home' } as const;
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddDataForPagePropertyInBannerEntity1763436763480

@@ -21,12 +21,10 @@ import {
 } from '@nestjs/swagger';
 import { AppPaginatedResponseDto, AppResponseDto } from 'src/app/app.dto';
 import {
-  AggregateAccountRevenueResponseDto,
   CompleteUserRegistrationRequestDto,
   CreateUserRequestDto,
   CurrentUserDto,
   ExportUserQueryRequestDto,
-  GetAccountRevenueQueryDto,
   GetAllUserQueryRequestDto,
   GetUserStatisticsQueryRequestDto,
   UpdateUserLanguageRequestDto,
@@ -39,7 +37,7 @@ import { HasRoles } from 'src/role/roles.decorator';
 import { RoleEnum } from 'src/role/role.enum';
 import { CurrentUser } from './user.decorator';
 import { AuthProfileResponseDto } from 'src/auth/auth.dto';
-import { UserScheduler } from './user.scheduler';
+import { BirthdayProducerRun, UserScheduler } from './user.scheduler';
 
 @Controller('user')
 @ApiTags('User')
@@ -60,13 +58,18 @@ export class UserController {
     status: HttpStatus.OK,
     description: 'Birthday greeting scheduler has been triggered successfully',
   })
-  async triggerBirthdayScheduler(): Promise<AppResponseDto<void>> {
-    await this.userScheduler.BirthdayStrategyScheduler();
+  async triggerBirthdayScheduler(): Promise<
+    AppResponseDto<BirthdayProducerRun>
+  > {
+    // Step 6.16: the run says whether the producer is on and how many jobs it
+    // wrote; it no longer greets anyone itself (QD13).
+    const result = await this.userScheduler.BirthdayStrategyScheduler();
     return {
       message: 'Birthday greeting scheduler has been triggered successfully',
       statusCode: HttpStatus.OK,
       timestamp: new Date().toISOString(),
-    } as AppResponseDto<void>;
+      result,
+    } as AppResponseDto<BirthdayProducerRun>;
   }
 
   // ⛔ LO HONG CUA GIAI DOAN 1 - VA 25/09/2026.
@@ -75,7 +78,8 @@ export class UserController {
   // decorator, nen **bat ky tai khoan dang nhap nao - ke ca `Customer`** -
   // cung list duoc toan bo nguoi dung kem SDT / ho ten / email. Moi route
   // quan tri khac trong chinh controller nay deu da gac (`POST /user`,
-  // `GET /user/statistics`, `GET /user/revenue/account`); rieng no thi khong.
+  // `GET /user/statistics`, va `GET /user/revenue/account` truoc 6.14); rieng
+  // no thi khong.
   //
   // **Sau A6 buoc 4, route nay khong con BEN TIEU THU nao.** Ben tieu thu duy
   // nhat truoc day la `findSharedUserSlugByPhonenumber` o `trend-ui`, va ham do
@@ -215,30 +219,6 @@ export class UserController {
       timestamp: new Date().toISOString(),
       result,
     } as AppResponseDto<UserStatisticsResponseDto>;
-  }
-
-  @Get('revenue/account')
-  @HasRoles(RoleEnum.Manager, RoleEnum.Admin, RoleEnum.SuperAdmin)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get revenue from orders owned by customers with accounts',
-  })
-  @ApiResponseWithType({
-    type: AggregateAccountRevenueResponseDto,
-    status: HttpStatus.OK,
-    description: 'The account revenues retrieved successfully',
-  })
-  async findAllAccountRevenue(
-    @Query(new ValidationPipe({ transform: true }))
-    query: GetAccountRevenueQueryDto,
-  ) {
-    const result = await this.userService.findAllAccountRevenue(query);
-    return {
-      message: 'Account revenues have been retrieved successfully',
-      statusCode: HttpStatus.OK,
-      timestamp: new Date().toISOString(),
-      result,
-    } as AppResponseDto<AggregateAccountRevenueResponseDto>;
   }
 
   @Get('export')

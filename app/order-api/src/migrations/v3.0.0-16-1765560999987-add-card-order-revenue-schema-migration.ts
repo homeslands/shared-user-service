@@ -1,4 +1,23 @@
-import { CardOrderRevenue } from 'src/gift-card-modules/analysis/card-order-revenue/entities/card-order-revenue.entity';
+// Step 6.17: The CardOrderRevenue entity (src/gift-card-modules/analysis/) was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+// It was only a holder for the values of the insert below.
+interface CardOrderRevenue {
+  id: string;
+  slug: string;
+  date: Date;
+  bankRevenue: number;
+  cashRevenue: number;
+  cardCount: number;
+  cardPurchaseOrderCount: number;
+  giftTopupOrderCount: number;
+  selfTopupOrderCount: number;
+  totalCardOrders: number;
+  totalRevenue: number;
+  totalCardOrdersByBank: number;
+  totalCardOrdersByCash: number;
+  minOrderSequence: number;
+  maxOrderSequence: number;
+}
 import { getRandomString } from 'src/helper';
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -193,7 +212,7 @@ export class AddCardOrderRevenueSchemaMigration1765560999987 implements Migratio
     private buildCardOrderRenenueItem(revenue: IRevenueQueryResult) {
         const id = uuidv4();
         const slug = getRandomString();
-        const cor = new CardOrderRevenue();
+        const cor = {} as CardOrderRevenue;
         Object.assign(cor, {
             id,
             slug,
