@@ -1,0 +1,137 @@
+import {
+  ArrayNotEmpty,
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+// Request bodies of /internal/balance/* (step 6.5). The wallet knows a user by
+// shared-user id and a transaction by the key the calling service sends; it
+// knows nothing of the caller's own objects beyond the soft reference it
+// stores with the ledger row (objectType / objectId / objectSlug).
+//
+// Order of decorators: HttpExceptionFilter keeps only the FIRST message and
+// class-validator reports in reverse declaration order, so the type check is
+// declared last.
+
+// '<service>:<reference>[:<op>[:<seq>]]', at most 191 characters (the
+// idempotency column of step 6.3).
+export const WALLET_TRANSACTION_ID_PATTERN = /^[a-z][a-z0-9-]*:\S+$/;
+
+export class LookupBalanceRequestDto {
+  @IsNotEmpty({ message: 'userId is required' })
+  @IsString({ message: 'userId must be a string' })
+  userId: string;
+}
+
+export class BatchLookupBalanceRequestDto {
+  @IsString({ each: true, message: 'each userId must be a string' })
+  @ArrayNotEmpty({ message: 'userIds must not be empty' })
+  @IsArray({ message: 'userIds must be an array' })
+  userIds: string[];
+}
+
+export class CreditBalanceRequestDto {
+  @IsNotEmpty({ message: 'userId is required' })
+  @IsString({ message: 'userId must be a string' })
+  userId: string;
+
+  @Min(1, { message: 'points must be greater than 0' })
+  @IsInt({ message: 'points must be an integer' })
+  @Type(() => Number)
+  points: number;
+
+  @Matches(WALLET_TRANSACTION_ID_PATTERN, {
+    message: 'transactionId must look like <service>:<reference>',
+  })
+  @MaxLength(191, { message: 'transactionId is at most 191 characters' })
+  @IsString({ message: 'transactionId must be a string' })
+  transactionId: string;
+
+  // Soft reference to the object of the calling service that produced the
+  // transaction (e.g. 'gift-card' + its id and slug there). Stored as is,
+  // never looked up: shared-user does not own those objects.
+  @MaxLength(255, { message: 'objectType is at most 255 characters' })
+  @IsNotEmpty({ message: 'objectType is required' })
+  @IsString({ message: 'objectType must be a string' })
+  objectType: string;
+
+  @MaxLength(255, { message: 'objectId is at most 255 characters' })
+  @IsNotEmpty({ message: 'objectId is required' })
+  @IsString({ message: 'objectId must be a string' })
+  objectId: string;
+
+  @MaxLength(255, { message: 'objectSlug is at most 255 characters' })
+  @IsNotEmpty({ message: 'objectSlug is required' })
+  @IsString({ message: 'objectSlug must be a string' })
+  objectSlug: string;
+
+  @IsOptional()
+  @MaxLength(255, { message: 'desc is at most 255 characters' })
+  @IsString({ message: 'desc must be a string' })
+  desc?: string;
+}
+
+// Suffix of the ledger row a release writes: release of key K is the
+// transaction K:release, so a debit key leaves room for it (191 - 8 = 183).
+export const WALLET_RELEASE_SUFFIX = ':release';
+export const WALLET_DEBIT_KEY_MAX = 191 - WALLET_RELEASE_SUFFIX.length;
+
+// Debit (step 6.6, QD9: one step, no reserve / confirm on xu). Same body as a
+// credit; the key is shorter so that its release fits the key column.
+export class DebitBalanceRequestDto extends CreditBalanceRequestDto {
+  @MaxLength(WALLET_DEBIT_KEY_MAX, {
+    message: `transactionId of a debit is at most ${WALLET_DEBIT_KEY_MAX} characters`,
+  })
+  transactionId: string;
+}
+
+// release (the key of the debit to give back) and lookup-transaction.
+export class TransactionKeyRequestDto {
+  @Matches(WALLET_TRANSACTION_ID_PATTERN, {
+    message: 'transactionId must look like <service>:<reference>',
+  })
+  @MaxLength(191, { message: 'transactionId is at most 191 characters' })
+  @IsString({ message: 'transactionId must be a string' })
+  transactionId: string;
+}
+
+// Response of lookup / batch-lookup: points is the balance (xu) of the user,
+// 0 when the user has no balance row yet.
+export interface BalanceLookupResponse {
+  userId: string;
+  points: number;
+}
+
+// Response of credit / debit / release: the ledger row written (its key,
+// the points moved) and balance, the balance right after it (the caller no
+// longer reads it back). A replay of the same key returns the same
+// transaction and balance with replayed = true and changes nothing.
+export interface BalanceMoveResponse {
+  transactionId: string;
+  userId: string;
+  points: number;
+  balance: number;
+  replayed: boolean;
+  createdAt: Date;
+}
+
+// Response of lookup-transaction (QD10): a ledger row of the calling
+// service, found by its key. type is 'in' or 'out'.
+export interface BalanceTransactionResponse {
+  transactionId: string;
+  userId: string;
+  type: string;
+  points: number;
+  balance: number;
+  objectType: string;
+  objectId: string;
+  objectSlug: string;
+  createdAt: Date;
+}

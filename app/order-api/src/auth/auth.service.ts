@@ -48,9 +48,6 @@ import {
 } from './auth.validation';
 import moment from 'moment';
 import { v4 as uuidv4 } from 'uuid';
-import { Branch } from 'src/branch/branch.entity';
-import { BranchValidation } from 'src/branch/branch.validation';
-import { BranchException } from 'src/branch/branch.exception';
 import { FileService } from 'src/file/file.service';
 import { MailService } from 'src/mail/mail.service';
 import { ForgotPasswordToken } from './entity/forgot-password-token.entity';
@@ -94,8 +91,6 @@ import {
   UserRequirementScope,
   UserRequirementStatus,
 } from 'src/user/user.constant';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { CampaignAction } from 'src/campaign/campaign.constants';
 
 @Injectable()
 export class AuthService {
@@ -111,8 +106,6 @@ export class AuthService {
     private readonly configService: ConfigService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(Branch)
-    private readonly branchRepository: Repository<Branch>,
     @InjectRepository(Role)
     private readonly roleRepository: Repository<Role>,
     @InjectMapper()
@@ -137,7 +130,6 @@ export class AuthService {
     @InjectRepository(ZaloOaConnectorConfig)
     private readonly zaloOaConnectorConfigRepository: Repository<ZaloOaConnectorConfig>,
     private readonly sharedBalanceService: SharedBalanceService,
-    private readonly eventEmitter: EventEmitter2,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
     this.duration = this.configService.get<number>('DURATION');
@@ -147,12 +139,6 @@ export class AuthService {
     this.zaloOaApiKey = this.configService.get<string>('ZALO_OA_API_KEY');
     this.zaloOaSecretKey = this.configService.get<string>('ZALO_OA_SECRET_KEY');
     this.zaloOaId = this.configService.get<string>('ZALO_OA_ID');
-  }
-
-  private isTodayBirthday(dobDM: string): boolean {
-    const today = new Date();
-    const todayDM = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}`;
-    return dobDM === todayDM;
   }
 
   async getZaloOaConnectorConfig(
@@ -1425,7 +1411,7 @@ export class AuthService {
     const context = `${AuthService.name}.${this.uploadAvatar.name}`;
     const userEntity = await this.userUtils.getUser({
       where: { id: user.userId },
-      relations: ['branch', 'role.permissions.authority.authorityGroup'],
+      relations: ['role.permissions.authority.authorityGroup'],
     });
 
     // Delete old avatar
@@ -1495,7 +1481,6 @@ export class AuthService {
    * @param {CurrentUserDto} currentUserDto The currently authenticated user's details.
    * @param {UpdateAuthProfileRequestDto} requestData
    * @returns {Promise<AuthProfileResponseDto>} Updated user profile
-   * @throws {BranchException} Throw if branch is not found
    * @throws {AuthException} Throw if user is not found
    */
   async updateProfile(
@@ -1512,17 +1497,6 @@ export class AuthService {
       ...requestData,
     });
 
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: { slug: requestData.branch },
-      });
-      if (!branch) {
-        this.logger.warn(`Branch ${requestData.branch} not found`, context);
-        throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      }
-      user.branch = branch;
-    }
-
     if ('dob' in requestData) {
       const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
       user.dobDM = day && month ? `${day}${month}` : null;
@@ -1530,14 +1504,6 @@ export class AuthService {
     try {
       const updatedUser = await this.userRepository.save(user);
       this.logger.log(`User ${user.id} updated profile`, context);
-      if (
-        requestData.dob &&
-        updatedUser.dobDM &&
-        this.isTodayBirthday(updatedUser.dobDM)
-      )
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: updatedUser,
-        });
       return this.mapper.map(updatedUser, User, AuthProfileResponseDto);
     } catch (error) {
       this.logger.error(
@@ -2030,14 +1996,6 @@ export class AuthService {
 
     if (createdUser) {
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
-      this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-        user: createdUser,
-      });
-      if (createdUser.dobDM && this.isTodayBirthday(createdUser.dobDM)) {
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: createdUser,
-        });
-      }
     }
 
     const userWithRelations = await this.userRepository.findOne({
@@ -2148,16 +2106,6 @@ export class AuthService {
     if (createdUser)
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
 
-    if (createdUser) {
-      this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-        user: createdUser,
-      });
-      if (createdUser.dobDM && this.isTodayBirthday(createdUser.dobDM))
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: createdUser,
-        });
-    }
-
     return this.mapper.map(createdUser, User, RegisterAuthResponseDto);
   }
 
@@ -2178,9 +2126,6 @@ export class AuthService {
     const user = await this.userUtils.getUser({
       where: { id: userId },
       relations: {
-        branch: {
-          addressDetail: true,
-        },
         role: {
           permissions: {
             authority: {

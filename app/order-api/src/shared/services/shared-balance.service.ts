@@ -9,7 +9,7 @@ import { BalanceValidation } from 'src/gift-card-modules/balance/balance.validat
 import { User } from 'src/user/user.entity';
 import { AuthException } from 'src/auth/auth.exception';
 import { AuthValidation } from 'src/auth/auth.validation';
-import { FindByFieldDto } from 'src/gift-card-modules/balance/dto/find-by-field.dto';
+import { BalanceLookup } from 'src/gift-card-modules/balance/balance-lookup.interface';
 
 @Injectable()
 export class SharedBalanceService {
@@ -100,7 +100,7 @@ export class SharedBalanceService {
     );
   }
 
-  async findOneByField(payload: FindByFieldDto) {
+  async findOneByField(payload: BalanceLookup) {
     const context = `${SharedBalanceService.name}.${this.findOneByField.name}`;
     this.logger.debug(
       `Finding balance by field: ${JSON.stringify(payload)}`,
@@ -172,7 +172,13 @@ export class SharedBalanceService {
         balance.points += points;
         break;
       case 'out':
-        // Throw exceptions
+        // Step 6.6 (6A-4): a debit larger than the balance went through and
+        // left the balance negative (the comment here said "Throw exceptions"
+        // and nothing was thrown). Refuse it. The internal debit route checks
+        // the same on a locked row and in the WHERE of its UPDATE.
+        if (balance.points < points) {
+          throw new BalanceException(BalanceValidation.INSUFFICIENT_BALANCE);
+        }
         balance.points -= points;
         break;
       default:

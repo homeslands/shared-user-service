@@ -5,7 +5,6 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Between,
@@ -23,16 +22,9 @@ import { InjectMapper } from '@automapper/nestjs';
 import { Mapper } from '@automapper/core';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import {
-  AccountRevenueCustomerResponseDto,
-  AccountRevenueQueryResponseDto,
-  AccountRevenueStatisticItemDto,
-  AccountRevenueStatisticQueryResponseDto,
-  AccountRevenueSummaryResponseDto,
-  AggregateAccountRevenueResponseDto,
   CompleteUserRegistrationRequestDto,
   CreateUserRequestDto,
   ExportUserQueryRequestDto,
-  GetAccountRevenueQueryDto,
   GetAllUserQueryRequestDto,
   GetUserStatisticsQueryRequestDto,
   UpdateUserLanguageRequestDto,
@@ -56,35 +48,22 @@ import { UserValidation } from './user.validation';
 import { RoleValidation } from 'src/role/role.validation';
 import { RoleException } from 'src/role/role.exception';
 import * as _ from 'lodash';
-import { BranchValidation } from 'src/branch/branch.validation';
-import { BranchException } from 'src/branch/branch.exception';
-import { Branch } from 'src/branch/branch.entity';
 import { AuthException } from 'src/auth/auth.exception';
 import { AuthValidation } from 'src/auth/auth.validation';
 import { RoleEnum } from 'src/role/role.enum';
 import { SharedBalanceService } from 'src/shared/services/shared-balance.service';
 import { AuthProfileResponseDto } from 'src/auth/auth.dto';
 import {
-  AccountRevenueCustomerType,
   DobFilterType,
   UserRequirementKey,
   UserRequirementLevel,
   UserRequirementScope,
   UserRequirementStatus,
-  UserStatisticsGroupBy,
 } from './user.constant';
-import {
-  getAccountRevenueClause,
-  getAccountRevenueStatisticClause,
-} from './user.clause';
-import { RevenueValidation } from 'src/revenue/revenue.validation';
-import { RevenueException } from 'src/revenue/revenue.exception';
-import { BranchUtils } from 'src/branch/branch.utils';
 import moment from 'moment';
 import ExcelJS from 'exceljs';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
-import { CampaignAction } from 'src/campaign/campaign.constants';
 import { v4 as uuidv4 } from 'uuid';
 
 // Thong diep 409 cua POST /internal/users/import - ben goi phan biet trung
@@ -108,8 +87,6 @@ export class UserService {
     private readonly mailService: MailService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(Branch)
-    private readonly branchRepository: Repository<Branch>,
     @InjectRepository(Role)
     private readonly roleRepository: Repository<Role>,
     @InjectMapper()
@@ -118,16 +95,8 @@ export class UserService {
     private readonly logger: Logger,
     private readonly sharedBalanceService: SharedBalanceService,
     private readonly transactionManagerService: TransactionManagerService,
-    private readonly eventEmitter: EventEmitter2,
-    private readonly branchUtils: BranchUtils,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
-  }
-
-  private isTodayBirthday(dobDM: string): boolean {
-    const today = new Date();
-    const todayDM = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}`;
-    return dobDM === todayDM;
   }
 
   async getUserBySlug(slug: string) {
@@ -136,7 +105,7 @@ export class UserService {
       where: {
         slug,
       },
-      relations: ['branch', 'role'],
+      relations: ['role'],
     });
 
     if (!user) {
@@ -619,24 +588,13 @@ export class UserService {
     const context = `${UserService.name}.${this.updateUser.name}`;
     const user = await this.userRepository.findOne({
       where: { slug },
-      relations: ['branch', 'role'],
+      relations: ['role'],
     });
     if (!user) throw new UserException(UserValidation.USER_NOT_FOUND);
 
     Object.assign(user, {
       ...requestData,
     });
-
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: { slug: requestData.branch },
-      });
-      if (!branch) {
-        this.logger.warn(`Branch ${requestData.branch} not found`, context);
-        throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      }
-      user.branch = branch;
-    }
 
     if ('dob' in requestData) {
       const [day, month] = requestData.dob ? requestData.dob.split('/') : [];
@@ -645,14 +603,6 @@ export class UserService {
     try {
       const updatedUser = await this.userRepository.save(user);
       this.logger.log(`User ${user.id} updated profile`, context);
-      if (
-        requestData.dob &&
-        updatedUser.dobDM &&
-        this.isTodayBirthday(updatedUser.dobDM)
-      )
-        this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-          user: updatedUser,
-        });
       return this.mapper.map(updatedUser, User, UserResponseDto);
     } catch (error) {
       this.logger.error(
@@ -837,16 +787,6 @@ export class UserService {
       ownerService: options?.ownerService ?? null,
     });
 
-    if (requestData.branch) {
-      const branch = await this.branchRepository.findOne({
-        where: {
-          slug: requestData.branch,
-        },
-      });
-      if (!branch) throw new BranchException(BranchValidation.BRANCH_NOT_FOUND);
-      user.branch = branch;
-    }
-
     let createdUser = null;
     if (createdRole == RoleEnum.Admin || createdRole == RoleEnum.SuperAdmin) {
       user.isVerifiedPhonenumber = requestData.isVerifiedPhonenumber ?? false;
@@ -876,18 +816,8 @@ export class UserService {
         const [day, month] = requestData.dob.split('/');
         user.dobDM = `${day}${month}`;
       }
-      const createdUser = await this.userRepository.save(user);
+      await this.userRepository.save(user);
       this.logger.log(`User has been created successfully`, context);
-
-      if (createdUser) {
-        this.eventEmitter.emit(CampaignAction.USER_CREATED, {
-          user: createdUser,
-        });
-        if (user.dobDM && this.isTodayBirthday(user.dobDM))
-          this.eventEmitter.emit(CampaignAction.USER_BIRTHDAY_TRIGGERED, {
-            user,
-          });
-      }
     } catch (error) {
       this.logger.error(
         `Error when creating user: ${error.message}`,
@@ -936,7 +866,6 @@ export class UserService {
     // Construct where options
     const whereOptions: FindOptionsWhere<User> = {};
     if (query.slug) whereOptions.slug = query.slug;
-    if (query.branch) whereOptions.branch = { slug: query.branch };
     if (query.phonenumber)
       whereOptions.phonenumber = Like(`%${query.phonenumber}%`);
     if (!_.isEmpty(query.role))
@@ -993,7 +922,6 @@ export class UserService {
     // Construct find many options
     const findManyOptions: FindManyOptions<User> = {
       relations: {
-        branch: true,
         role: true,
         accumulatedPoint: true,
         membershipCard: true,
@@ -1087,7 +1015,7 @@ export class UserService {
 
   /**
    * Export users to an Excel file containing name, phone number and date of birth.
-   * Supports filtering by branch, phone number and a date of birth range that
+   * Supports filtering by phone number, role and a date of birth range that
    * matches by day, month or day+month (the year is ignored).
    * Note: `dob` is stored as a `DD/MM/YYYY` string, so the range is filtered in
    * memory after fetching.
@@ -1105,7 +1033,7 @@ export class UserService {
       };
 
     let users = await this.userRepository.find({
-      relations: { branch: true, role: true },
+      relations: { role: true },
       where: whereOptions,
       order: { createdAt: 'DESC' },
     });
@@ -1219,141 +1147,6 @@ export class UserService {
     const total = data.reduce((sum, item) => sum + item.count, 0);
 
     return { data, total };
-  }
-
-  async findAllAccountRevenue(
-    query: GetAccountRevenueQueryDto,
-  ): Promise<AggregateAccountRevenueResponseDto> {
-    const context = `${UserService.name}.${this.findAllAccountRevenue.name}`;
-    if (!query.branch) {
-      this.logger.error(`Branch is not provided`, null, context);
-      throw new BadRequestException(`Branch must be provided`);
-    }
-    const branch = await this.branchUtils.getBranch({
-      where: { slug: query.branch },
-    });
-
-    const hasStartDate = !!query.startDate;
-    const hasEndDate = !!query.endDate;
-
-    if (
-      hasStartDate &&
-      hasEndDate &&
-      new Date(query.startDate).getTime() > new Date(query.endDate).getTime()
-    ) {
-      this.logger.warn(
-        RevenueValidation.START_DATE_ONLY_SMALLER_OR_EQUAL_END_DATE.message,
-        context,
-      );
-      throw new RevenueException(
-        RevenueValidation.START_DATE_ONLY_SMALLER_OR_EQUAL_END_DATE,
-      );
-    }
-
-    // Registered-within-range filter only makes sense with a date range
-    const onlyNewCustomers =
-      (hasStartDate || hasEndDate) &&
-      query.customerType === AccountRevenueCustomerType.NEW_REGISTER;
-    const params: string[] = [branch.id];
-
-    // 'YYYY-MM-DDTHH:mm:ss' local time → MySQL datetime literal
-    const startParam = query.startDate?.replace('T', ' ');
-    const endParam = query.endDate?.replace('T', ' ');
-    if (hasStartDate) params.push(startParam);
-    if (hasEndDate) params.push(endParam);
-    if (onlyNewCustomers) {
-      if (hasStartDate) params.push(startParam);
-      if (hasEndDate) params.push(endParam);
-    }
-
-    if (query.paymentMethod) params.push(query.paymentMethod);
-
-    if (query.phonenumber) params.push(`%${query.phonenumber}%`);
-
-    const clauseOptions = {
-      hasStartDate,
-      hasEndDate,
-      onlyNewCustomers,
-      hasPaymentMethod: !!query.paymentMethod,
-      hasPhonenumber: !!query.phonenumber,
-    };
-
-    const [results, statisticResults]: [
-      AccountRevenueQueryResponseDto[],
-      AccountRevenueStatisticQueryResponseDto[],
-    ] = await Promise.all([
-      this.userRepository.query(getAccountRevenueClause(clauseOptions), params),
-      this.userRepository.query(
-        getAccountRevenueStatisticClause({
-          ...clauseOptions,
-          groupBy: query.groupBy ?? UserStatisticsGroupBy.DAY,
-        }),
-        params,
-      ),
-    ]);
-
-    const customers: AccountRevenueCustomerResponseDto[] = results.map(
-      (item) => ({
-        customerSlug: item.customerSlug,
-        customerName: item.customerName,
-        customerRegisteredAt: moment(item.customerRegisteredAt).toDate(),
-        totalAmount: Number(item.totalAmount),
-        totalAmountPoint: Number(item.totalAmountPoint),
-        totalAmountBank: Number(item.totalAmountBank),
-        totalAmountCash: Number(item.totalAmountCash),
-        totalAmountCreditCard: Number(item.totalAmountCreditCard),
-      }),
-    );
-
-    const summary = customers.reduce(
-      (acc, item) => {
-        acc.totalAmount += item.totalAmount;
-        acc.totalAmountPoint += item.totalAmountPoint;
-        acc.totalAmountBank += item.totalAmountBank;
-        acc.totalAmountCash += item.totalAmountCash;
-        acc.totalAmountCreditCard += item.totalAmountCreditCard;
-        return acc;
-      },
-      {
-        totalAmount: 0,
-        totalAmountPoint: 0,
-        totalAmountBank: 0,
-        totalAmountCash: 0,
-        totalAmountCreditCard: 0,
-        percentPoint: 0,
-        percentBank: 0,
-        percentCash: 0,
-        percentCreditCard: 0,
-      } as AccountRevenueSummaryResponseDto,
-    );
-
-    if (summary.totalAmount > 0) {
-      const toPercent = (amount: number) =>
-        Math.round((amount / summary.totalAmount) * 10000) / 100;
-      summary.percentPoint = toPercent(summary.totalAmountPoint);
-      summary.percentBank = toPercent(summary.totalAmountBank);
-      summary.percentCash = toPercent(summary.totalAmountCash);
-      summary.percentCreditCard = toPercent(summary.totalAmountCreditCard);
-    }
-
-    const data: AccountRevenueStatisticItemDto[] = statisticResults.map(
-      (item) => ({
-        time: String(item.time),
-        count: Number(item.count),
-        countPoint: Number(item.countPoint),
-        countBank: Number(item.countBank),
-        countCash: Number(item.countCash),
-        countCreditCard: Number(item.countCreditCard),
-        totalAmount: Number(item.totalAmount),
-        totalAmountPoint: Number(item.totalAmountPoint),
-        totalAmountBank: Number(item.totalAmountBank),
-        totalAmountCash: Number(item.totalAmountCash),
-        totalAmountCreditCard: Number(item.totalAmountCreditCard),
-      }),
-    );
-    const total = data.reduce((sum, item) => sum + item.count, 0);
-
-    return { summary, customers, data, total };
   }
 
   /**

@@ -9,25 +9,16 @@ import {
 } from 'typeorm';
 import { Base } from 'src/app/base.entity';
 import { AutoMap } from '@automapper/classes';
-import { Branch } from 'src/branch/branch.entity';
-import { Order } from 'src/order/order.entity';
 import { ForgotPasswordToken } from 'src/auth/entity/forgot-password-token.entity';
 import { Role } from 'src/role/role.entity';
 import { VerifyEmailToken } from 'src/auth/entity/verify-email-token.entity';
-import { CardOrder } from 'src/gift-card-modules/card-order/entities/card-order.entity';
-import { Recipient } from 'src/gift-card-modules/receipient/entities/receipient.entity';
 import { VerifyPhoneNumberToken } from 'src/auth/entity/verify-phone-number-token.entity';
 import { PointTransaction } from 'src/gift-card-modules/point-transaction/entities/point-transaction.entity';
-import { GiftCard } from 'src/gift-card-modules/gift-card/entities/gift-card.entity';
 import { AccumulatedPoint } from 'src/accumulated-point/entities/accumulated-point.entity';
-import { UserGroupMember } from 'src/user-group-member/user-group-member.entity';
-import { FirebaseDeviceToken } from 'src/notification/firebase/firebase-device-token.entity';
 import { UserLanguage } from './user.constant';
-import { Voucher } from 'src/voucher/entity/voucher.entity';
 import { Balance } from 'src/gift-card-modules/balance/entities/balance.entity';
 import { MembershipCard } from 'src/membership-card/membership-card.entity';
 import { UserRequirement } from './user-requirement.entity';
-import { CampaignRecipient } from 'src/campaign/entity/campaign-recipient.entity';
 
 // QD19 + QD21: index cho list-recent loc theo created_at_column (migration
 // v4.0.0-02). Khai bao o cap class vi cot nam o Base - dat @Index trong Base
@@ -105,19 +96,16 @@ export class User extends Base {
   @Column({ name: 'image_column', nullable: true })
   image?: string;
 
-  // Many to one with branch
-  @AutoMap(() => Branch)
-  @ManyToOne(() => Branch, (branch) => branch.users)
-  @JoinColumn({ name: 'branch_id_column' })
-  branch: Branch;
-
-  // One to many with owner order
-  @OneToMany(() => Order, (order) => order.owner)
-  ownerOrders: Order[];
-
-  // One to many with approval order
-  @OneToMany(() => Order, (order) => order.approvalBy)
-  approvalOrders: Order[];
+  // Step 6.13: shared-user keeps identity and drops the business relations of
+  // the monolith copy (branch, orders, card orders, gift cards, user groups,
+  // device tokens, vouchers, campaign recipients): they belong to the order
+  // services, which hold a sharedUserId instead. The opposite of trend, which
+  // keeps the business relations and drops identity; both meet at the
+  // sharedUserId. Kept: identity, the wallet (coin transactions, balance,
+  // points), the three token relations, role (QD15: shared-user's own roles),
+  // membershipCard and userRequirements (QD22: both tables now belong to
+  // shared-user, login and refresh read userRequirements).
+  // No migration here: branch_id_column stays in user_tbl as it is.
 
   @OneToMany(() => ForgotPasswordToken, (token) => token.user)
   forgotPasswordTokens: ForgotPasswordToken[];
@@ -145,52 +133,13 @@ export class User extends Base {
   )
   verifyPhoneNumberTokens: VerifyPhoneNumberToken[];
 
-  @OneToMany(() => CardOrder, (cardOrder) => cardOrder.customer, {
-    onDelete: 'SET NULL',
-  })
-  customerCardOrders: CardOrder[];
-
-  @OneToMany(() => CardOrder, (cardOrder) => cardOrder.cashier, {
-    onDelete: 'SET NULL',
-  })
-  cashierCardOrders: CardOrder[];
-
-  @OneToMany(() => Recipient, (receipient) => receipient.recipient, {
-    onDelete: 'SET NULL',
-  })
-  recipientCardOrders: Recipient[];
-
-  @OneToMany(() => Recipient, (receipient) => receipient.sender, {
-    onDelete: 'SET NULL',
-  })
-  senderCardOrders: Recipient[];
-
   @OneToMany(() => PointTransaction, (pt) => pt.user)
   pointTransactions: PointTransaction[];
-
-  @OneToMany(() => GiftCard, (gc) => gc.usedBy)
-  giftCards?: GiftCard[];
 
   @OneToOne(() => AccumulatedPoint, (accumulatedPoint) => accumulatedPoint.user)
   @JoinColumn({ name: 'accumulated_point_column' })
   @AutoMap(() => AccumulatedPoint)
   accumulatedPoint: AccumulatedPoint;
-
-  // One to many with user group members
-  @OneToMany(() => UserGroupMember, (userGroupMember) => userGroupMember.user)
-  userGroupMembers: UserGroupMember[];
-
-  // One to many with device tokens
-  @OneToMany(
-    () => FirebaseDeviceToken,
-    (firebaseDeviceToken) => firebaseDeviceToken.user,
-  )
-  firebaseDeviceTokens: FirebaseDeviceToken[];
-
-  @OneToMany(() => Voucher, (voucher) => voucher.assignedUser, {
-    cascade: ['insert', 'update', 'remove'],
-  })
-  individualVouchers: Voucher[];
 
   @OneToOne(() => Balance, (b) => b.user)
   balance: Balance;
@@ -205,7 +154,4 @@ export class User extends Base {
   })
   @AutoMap(() => UserRequirement)
   userRequirements: UserRequirement[];
-
-  @OneToMany(() => CampaignRecipient, (cr) => cr.user)
-  campaignRecipients?: CampaignRecipient[];
 }

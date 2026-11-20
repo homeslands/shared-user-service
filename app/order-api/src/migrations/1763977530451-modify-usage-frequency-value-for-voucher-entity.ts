@@ -1,4 +1,6 @@
-import { VoucherUsageFrequencyUnit } from 'src/voucher/voucher.constant';
+// Step 6.17: src/voucher/voucher.constant.ts was removed with its module; the values this migration
+// uses are copied here so it keeps doing the same thing on a fresh database.
+const VoucherUsageFrequencyUnit = { UNLIMITED: 'unlimited' } as const;
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class ModifyUsageFrequencyValueForVoucherEntity1763977530451

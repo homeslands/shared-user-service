@@ -1,4 +1,3 @@
-import { AutoMap } from '@automapper/classes';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsOptional } from 'class-validator';
@@ -6,14 +5,10 @@ import moment from 'moment';
 import { BaseQueryDto } from 'src/app/base.dto';
 import { PointTransactionGroupBy } from '../entities/point-transaction.enum';
 
+// Step 6.9 (QD17): no user slug any more. GET /point-transaction is the self
+// view and filters on the user of the token; the history of someone else is
+// read by trend through an internal route after checking the role (6.10).
 export class FindAllPointTransactionDto extends BaseQueryDto {
-  @IsOptional()
-  @ApiProperty({
-    required: false,
-  })
-  @AutoMap()
-  userSlug?: string;
-
   @ApiProperty({
     required: false,
   })
