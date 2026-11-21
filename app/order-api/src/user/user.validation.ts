@@ -5,12 +5,14 @@ export const ERROR_CREATE_USER = 'ERROR_CREATE_USER';
 export const CANNOT_UPDATE_CUSTOMER_ROLE = 'CANNOT_UPDATE_CUSTOMER_ROLE';
 export const INVALID_LANGUAGE = 'INVALID_LANGUAGE';
 export const OWNER_NOT_A_CUSTOMER = 'OWNER_NOT_A_CUSTOMER';
+export const PHONENUMBER_SEARCH_TOO_BROAD = 'PHONENUMBER_SEARCH_TOO_BROAD';
 export type TUserErrorCodeKey =
   | typeof USER_NOT_FOUND
   | typeof CANNOT_UPDATE_CUSTOMER_ROLE
   | typeof ERROR_CREATE_USER
   | typeof INVALID_LANGUAGE
-  | typeof OWNER_NOT_A_CUSTOMER;
+  | typeof OWNER_NOT_A_CUSTOMER
+  | typeof PHONENUMBER_SEARCH_TOO_BROAD;
 export type TUserErrorCode = Record<TUserErrorCodeKey, TErrorCodeValue>;
 
 // 137000 - 138000
@@ -23,4 +25,11 @@ export const UserValidation: TUserErrorCode = {
   ),
   INVALID_LANGUAGE: createErrorCode(137003, 'Invalid language'),
   OWNER_NOT_A_CUSTOMER: createErrorCode(137004, 'Owner is not a customer'),
+  // QD4 (buoc 7.1) - POST /internal/users/search-by-phonenumber khop nhieu hon
+  // tran (INTERNAL_SEARCH_BY_PHONENUMBER_MAX). Khai song doi CUNG SO o trend
+  // va terminal (137005/137006 cua hai ben la ma rieng, 137007 trong o ca ba).
+  PHONENUMBER_SEARCH_TOO_BROAD: createErrorCode(
+    137007,
+    'Phone number search matches too many users, please narrow the search',
+  ),
 };

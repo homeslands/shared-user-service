@@ -14,6 +14,12 @@ export const INTERNAL_BATCH_LOOKUP_MAX = 200;
 export const INTERNAL_LIST_RECENT_MAX_LIMIT = 500;
 export const INTERNAL_LIST_RECENT_DEFAULT_LIMIT = 200;
 
+// QD4 (buoc 7.1) - POST /internal/users/search-by-phonenumber. Tran so id mot
+// lan tim; khop nhieu hon => 400 ma 137007 ("tim hep lai"), KHONG cat bot im
+// lang: ben goi dung mang id nay de loc mot danh sach, cat bot la danh sach
+// thieu nguoi ma khong ai biet. Ben goi khai song doi cung ten cung gia tri.
+export const INTERNAL_SEARCH_BY_PHONENUMBER_MAX = 500;
+
 // Header mang ten service goi. KHONG nam trong chu ky HMAC: hom nay hai ben
 // dung CHUNG mot `INTERNAL_API_SECRET`, nen mot service da co secret thi ky
 // duoc bat ky noi dung nao - dua header vao chu ky cung khong chong duoc
