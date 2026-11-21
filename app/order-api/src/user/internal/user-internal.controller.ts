@@ -17,6 +17,7 @@ import {
 import {
   INTERNAL_BATCH_LOOKUP_MAX,
   INTERNAL_LIST_RECENT_DEFAULT_LIMIT,
+  INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
 } from 'src/common/constants/internal-api.constant';
 import { UserService } from '../user.service';
 import {
@@ -25,6 +26,7 @@ import {
   ImportInternalUserRequestDto,
   ListRecentUserRequestDto,
   LookupUserRequestDto,
+  SearchByPhonenumberRequestDto,
   ToggleActiveUserRequestDto,
 } from './user-internal.dto';
 
@@ -85,6 +87,28 @@ export class UserInternalController {
       );
     }
     return this.userService.lookupByIds(body.ids);
+  }
+
+  // QD4 (buoc 7.1) - tim theo CHUOI CON cua SDT, tra mang `id` (string[]).
+  // Ben tieu thu: o tim SDT cua GET /user/revenue/account (trend, 7.2) va
+  // GET /user + lich su diem (terminal, 7.1) - loc truoc o day roi
+  // `shared_user_id_column IN (...)` ben ho, vi cot SDT cuc bo bi drop o GD8.
+  //
+  // KHONG noi `lookup` thanh LIKE: `lookup` la tra danh tinh chinh xac cua
+  // JwtStrategy va moi luong ghi. Route nay chi de LOC.
+  //
+  // Vuot tran (mac dinh INTERNAL_SEARCH_BY_PHONENUMBER_MAX) => 400 ma 137007
+  // "tim hep lai", khong cat bot im lang (cung ly do voi batch-lookup).
+  @Public()
+  @Post('search-by-phonenumber')
+  async searchByPhonenumber(
+    @Body(new ValidationPipe({ transform: true }))
+    body: SearchByPhonenumberRequestDto,
+  ): Promise<string[]> {
+    return this.userService.searchIdsByPhonenumber(
+      body.phonenumber,
+      body.limit ?? INTERNAL_SEARCH_BY_PHONENUMBER_MAX,
+    );
   }
 
   // Duong DONG BO USER CHINH giua cac service (QD19 + QD21): luoi nhanh 10

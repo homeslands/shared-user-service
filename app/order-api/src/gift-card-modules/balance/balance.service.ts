@@ -232,7 +232,8 @@ export class BalanceService {
 
   // Balance of each existing user among userIds, in the order asked, 0 when
   // the user has no balance row yet (no row is created on a read). Unknown
-  // ids are left out.
+  // ids are left out. Step 7.7d: also the slug and createdAt of the balance
+  // row (null without a row), read in the same query.
   async lookupPointsByUserIds(
     userIds: string[],
   ): Promise<BalanceLookupResponse[]> {
@@ -242,17 +243,31 @@ export class BalanceService {
       select: { id: true },
     });
     const known = new Set(users.map((u) => u.id));
-    const rows: { userId: string; points: string }[] =
-      await this.balanceRepository
-        .createQueryBuilder('b')
-        .select('b.user_column', 'userId')
-        .addSelect('b.points_column', 'points')
-        .where('b.user_column IN (:...ids)', { ids })
-        .getRawMany();
-    const points = new Map(rows.map((r) => [r.userId, Number(r.points)]));
+    const rows: {
+      userId: string;
+      points: string;
+      slug: string;
+      createdAt: Date;
+    }[] = await this.balanceRepository
+      .createQueryBuilder('b')
+      .select('b.user_column', 'userId')
+      .addSelect('b.points_column', 'points')
+      .addSelect('b.slug_column', 'slug')
+      .addSelect('b.created_at_column', 'createdAt')
+      .where('b.user_column IN (:...ids)', { ids })
+      .getRawMany();
+    const byUser = new Map(rows.map((r) => [r.userId, r]));
     return ids
       .filter((id) => known.has(id))
-      .map((id) => ({ userId: id, points: points.get(id) ?? 0 }));
+      .map((id) => {
+        const row = byUser.get(id);
+        return {
+          userId: id,
+          points: row ? Number(row.points) : 0,
+          slug: row?.slug ?? null,
+          createdAt: row?.createdAt ?? null,
+        };
+      });
   }
 
   // Add xu, idempotent on input.transactionId (step 6.5).
