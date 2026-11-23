@@ -61,6 +61,9 @@ services:
       REDIS_HOST: ${REDIS_HOST}
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # BullMQ prefix of the birthday consumer (trend, same Redis), step 8.1.
+      # Empty = the birthday producer of shared-user is off.
+      USER_BIRTHDAY_QUEUE_PREFIX: ${USER_BIRTHDAY_QUEUE_PREFIX:-}
 
       # Otel lgtm
       OTEL_LGTM_URL: ${OTEL_LGTM_URL}

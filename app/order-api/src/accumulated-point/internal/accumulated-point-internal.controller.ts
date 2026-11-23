@@ -22,6 +22,7 @@ import {
   AddAccumulatedPointRequestDto,
   BatchLookupAccumulatedPointRequestDto,
   LookupAccumulatedPointRequestDto,
+  PointsHistoryAccumulatedPointRequestDto,
   ReservationKeyRequestDto,
   ReserveAccumulatedPointRequestDto,
 } from './accumulated-point-internal.dto';
@@ -58,6 +59,31 @@ export class AccumulatedPointInternalController {
     ]);
     if (!row) throw new NotFoundException('User not found');
     return row;
+  }
+
+  // Step 8.5: the "view on behalf" history of one person (QD17) - the
+  // internal twin of GET /accumulated-point/history. The caller gates the
+  // role on its own data; unknown user => 404 (the caller shows an empty
+  // page, as for a person with no points row).
+  @Public()
+  @Post('history')
+  async history(
+    @Body(new ValidationPipe({ transform: true }))
+    body: PointsHistoryAccumulatedPointRequestDto,
+  ) {
+    const page = await this.accumulatedPointService.getPointsHistoryOfUser(
+      body.userId,
+      {
+        types: body.types,
+        fromDate: body.fromDate,
+        toDate: body.toDate,
+        hasPaging: body.hasPaging ?? true,
+        page: body.page ?? 1,
+        size: body.size ?? 10,
+      },
+    );
+    if (!page) throw new NotFoundException('User not found');
+    return page;
   }
 
   // Batch of /lookup, same rules as /internal/balance/batch-lookup: unknown

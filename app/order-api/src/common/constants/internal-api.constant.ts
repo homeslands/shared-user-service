@@ -20,6 +20,12 @@ export const INTERNAL_LIST_RECENT_DEFAULT_LIMIT = 200;
 // thieu nguoi ma khong ai biet. Ben goi khai song doi cung ten cung gia tri.
 export const INTERNAL_SEARCH_BY_PHONENUMBER_MAX = 500;
 
+// Buoc 8.1 - POST /internal/users/by-birthday. Cung luat voi
+// search-by-phonenumber (khop nhieu hon => 400 ma 137008, khong cat bot), tran
+// rong hon vi khoang ngay sinh khop theo ty le (mot ngay ~ 1/365 so nguoi, mot
+// thang ~ 1/12). Ben goi khai song doi cung ten cung gia tri.
+export const INTERNAL_SEARCH_BY_BIRTHDAY_MAX = 5000;
+
 // Header mang ten service goi. KHONG nam trong chu ky HMAC: hom nay hai ben
 // dung CHUNG mot `INTERNAL_API_SECRET`, nen mot service da co secret thi ky
 // duoc bat ky noi dung nao - dua header vao chu ky cung khong chong duoc
