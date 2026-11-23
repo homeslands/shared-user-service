@@ -1,6 +1,8 @@
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
+  IsIn,
   IsInt,
   IsISO8601,
   IsNotEmpty,
@@ -13,7 +15,15 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { WALLET_TRANSACTION_ID_PATTERN } from 'src/gift-card-modules/balance/internal/balance-internal.dto';
-import { RESERVATION_KEY_MAX } from '../accumulated-point.constants';
+import {
+  AccumulatedPointTransactionType,
+  RESERVATION_KEY_MAX,
+} from '../accumulated-point.constants';
+
+// Step 8.5: one "view on behalf" history page is at most this many rows -
+// the screens ask 10 to 50. `hasPaging: false` still reads every row, as
+// the route of trend / terminal it replaces did.
+export const INTERNAL_POINTS_HISTORY_PAGE_MAX = 200;
 
 // Request bodies of /internal/accumulated-points/* (step 6.7). Same rules as
 // /internal/balance/*: a user is a shared-user id, a transaction is the key
@@ -26,6 +36,50 @@ import { RESERVATION_KEY_MAX } from '../accumulated-point.constants';
 // declared last.
 
 export class LookupAccumulatedPointRequestDto {
+  @IsNotEmpty({ message: 'userId is required' })
+  @IsString({ message: 'userId must be a string' })
+  userId: string;
+}
+
+// Step 8.5: POST /internal/accumulated-points/history - the "view on behalf"
+// history of one person (QD17). A JSON body, so the fields are declared
+// again instead of extending GetPointHistoryQueryDto: its `hasPaging` turns
+// the STRING 'true' into true, a JSON `true` would become false. Defaults:
+// hasPaging true, page 1, size 10 (those of the query string).
+export class PointsHistoryAccumulatedPointRequestDto {
+  @IsOptional()
+  @IsString({ message: 'toDate must be a string' })
+  toDate?: string;
+
+  @IsOptional()
+  @IsString({ message: 'fromDate must be a string' })
+  fromDate?: string;
+
+  @IsOptional()
+  @IsBoolean({ message: 'hasPaging must be a boolean' })
+  hasPaging?: boolean;
+
+  @IsOptional()
+  @Max(INTERNAL_POINTS_HISTORY_PAGE_MAX, {
+    message: `size must be at most ${INTERNAL_POINTS_HISTORY_PAGE_MAX}`,
+  })
+  @Min(1, { message: 'size must be at least 1' })
+  @IsInt({ message: 'size must be an integer' })
+  size?: number;
+
+  @IsOptional()
+  @Min(1, { message: 'page must be at least 1' })
+  @IsInt({ message: 'page must be an integer' })
+  page?: number;
+
+  @IsIn(Object.values(AccumulatedPointTransactionType), {
+    each: true,
+    message: 'each type must be one of add, use, reserve, refund',
+  })
+  @ArrayNotEmpty({ message: 'types must not be empty' })
+  @IsArray({ message: 'types must be an array' })
+  types: string[];
+
   @IsNotEmpty({ message: 'userId is required' })
   @IsString({ message: 'userId must be a string' })
   userId: string;

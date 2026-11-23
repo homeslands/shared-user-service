@@ -29,6 +29,17 @@ import { Mapper } from '@automapper/core';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { AccumulatedPointResponseDto, GetPointHistoryQueryDto, PointTransactionHistoryResponseDto } from './accumulated-point.dto';
 import { AppPaginatedResponseDto } from 'src/app/app.dto';
+
+// Step 8.5: filters of one history page, already normalised (no defaults
+// left). GetPointHistoryQueryDto (self view, query string) fits it as is.
+export interface PointsHistoryQuery {
+  types: string[];
+  fromDate?: Date | string;
+  toDate?: Date | string;
+  hasPaging?: boolean;
+  page: number;
+  size: number;
+}
 import { AccumulatedPointException } from './accumulated-point.exception';
 import { AccumulatedPointValidation } from './accumulated-point.validation';
 import { isCustomer, isDefaultCustomer } from './accumulated-point.utils';
@@ -176,7 +187,36 @@ export class AccumulatedPointService {
       );
     }
 
-    if (!user.accumulatedPoint) {
+    return this.pointsHistoryPage(user.accumulatedPoint?.id ?? null, query);
+  }
+
+  /**
+   * Step 8.5: the "view on behalf" history of one person (QD17), for
+   * POST /internal/accumulated-points/history. The calling service (trend,
+   * terminal) gates the role and the walk-in customer on its OWN data - two
+   * independent permission systems (QD15) - so the role of the shared-user
+   * row is NOT checked again here. Unknown user => `null` (the route answers
+   * 404); a user with no points row => an empty page, as the self view.
+   */
+  async getPointsHistoryOfUser(
+    userId: string,
+    query: PointsHistoryQuery,
+  ): Promise<AppPaginatedResponseDto<PointTransactionHistoryResponseDto> | null> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['accumulatedPoint'],
+    });
+    if (!user) return null;
+    return this.pointsHistoryPage(user.accumulatedPoint?.id ?? null, query);
+  }
+
+  // Step 8.5: one page of history rows of a points row - shared by the self
+  // view and the internal "view on behalf" route (same filters, same shape).
+  private async pointsHistoryPage(
+    accumulatedPointId: string | null,
+    query: PointsHistoryQuery,
+  ): Promise<AppPaginatedResponseDto<PointTransactionHistoryResponseDto>> {
+    if (!accumulatedPointId) {
       return {
         hasNext: false,
         hasPrevios: false,
@@ -191,7 +231,7 @@ export class AccumulatedPointService {
     // Construct where options
     const whereOptions: FindOptionsWhere<AccumulatedPointTransactionHistory> = {
       accumulatedPoint: {
-        id: user.accumulatedPoint.id,
+        id: accumulatedPointId,
       },
       type: In([query.types]),
     };

@@ -257,6 +257,64 @@ export class UserService {
     return users.map((user) => user.id);
   }
 
+  // Buoc 8.1 - mang `id` cua moi nguoi co ngay sinh (bo qua nam) trong khoang
+  // [from, to] theo do min `type`. Ben goi: scheduler sinh nhat cua terminal
+  // (QD-T8: terminal giu scheduler rieng, doi nguon ngay sinh sang day) va bo
+  // loc ngay sinh cua trend (8.2) - ca hai loc `sharedUserId IN (...)` ben ho
+  // vi cot ngay sinh cuc bo bi doi ten o 8.9.
+  //
+  // Loc trong SQL tren `dob_day_month` (DDMM, ghi cung `dob`), khoa so sanh
+  // nhu `parseDobBound`: day | month | month*100+day. from > to => khoang vat
+  // qua cuoi nam. Khop nhieu hon `limit` => 400 ma 137008, khong cat bot.
+  async searchIdsByBirthday(
+    type: DobFilterType,
+    from: string | undefined,
+    to: string | undefined,
+    limit: number,
+  ): Promise<string[]> {
+    if (!from && !to) {
+      throw new BadRequestException('from or to is required');
+    }
+    const start = from ? this.parseDobBound(from, type) : null;
+    const end = to ? this.parseDobBound(to, type) : null;
+    const day = 'CAST(SUBSTRING(u.dob_day_month, 1, 2) AS UNSIGNED)';
+    const month = 'CAST(SUBSTRING(u.dob_day_month, 3, 2) AS UNSIGNED)';
+    const key =
+      type === DobFilterType.DAY
+        ? day
+        : type === DobFilterType.MONTH
+          ? month
+          : `(${month} * 100 + ${day})`;
+
+    const qb = this.userRepository
+      .createQueryBuilder('u')
+      .select('u.id', 'id')
+      .where("u.dob_day_month IS NOT NULL AND u.dob_day_month <> ''");
+    if (start !== null && end !== null) {
+      qb.andWhere(
+        start <= end
+          ? `${key} BETWEEN :start AND :end`
+          : `(${key} >= :start OR ${key} <= :end)`,
+        { start, end },
+      );
+    } else if (start !== null) {
+      qb.andWhere(`${key} >= :start`, { start });
+    } else {
+      qb.andWhere(`${key} <= :end`, { end });
+    }
+    const rows = await qb
+      .orderBy('u.id', 'ASC')
+      .limit(limit + 1)
+      .getRawMany<{ id: string }>();
+    if (rows.length > limit) {
+      throw new UserException(
+        UserValidation.BIRTHDAY_SEARCH_TOO_BROAD,
+        `Date of birth search matches more than ${limit} users, please narrow the range`,
+      );
+    }
+    return rows.map((row) => row.id);
+  }
+
   // Dung cho InternalUserController - job batch cuoi ngay ben service tieu
   // thu (trend/terminal) tu pull user moi tao trong khoang [createdFrom,
   // createdTo) de bu cho khoang tre cua lazy load thuan (user dang ky roi
