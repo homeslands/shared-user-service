@@ -24,6 +24,7 @@ import { VerifyPhoneNumberToken } from './entity/verify-phone-number-token.entit
 import { RegisterOtpToken } from './entity/register-otp-token.entity';
 import { ZaloOaConnectorModule } from 'src/zalo-oa-connector/zalo-oa-connector.module';
 import { SharedModule } from 'src/shared/shared.module';
+import { DomainEventsModule } from 'src/domain-events/domain-events.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { SharedModule } from 'src/shared/shared.module';
     UserModule,
     ZaloOaConnectorModule,
     SharedModule,
+    DomainEventsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, LocalStrategy, JwtStrategy, AuthProfile, AuthUtils],

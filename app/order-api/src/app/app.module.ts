@@ -40,6 +40,7 @@ import { JwtOptionalAuthGuard } from 'src/auth/passport/jwt/jwt-optional-auth.gu
 import { MembershipCardModule } from 'src/membership-card/membership-card.module';
 
 import { TestModule } from 'src/test/test.module';
+import { DomainEventsModule } from 'src/domain-events/domain-events.module';
 @Module({
   imports: [
     BullModule.forRootAsync({
@@ -98,6 +99,7 @@ import { TestModule } from 'src/test/test.module';
     AccumulatedPointModule,
     MembershipCardModule,
     TestModule,
+    DomainEventsModule,
   ],
   controllers: [AppController],
   providers: [
