@@ -17,12 +17,14 @@ import { QueueRegisterKey } from 'src/app/app.constants';
 import { UserBirthdayProducer } from './user-birthday.producer';
 import { USER_BIRTHDAY_QUEUE_PREFIX_ENV } from './user-birthday.constants';
 import { ConfigService } from '@nestjs/config';
+import { DomainEventsModule } from 'src/domain-events/domain-events.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Role, UserRequirement]),
     MailModule,
     SharedModule,
+    DomainEventsModule,
     // Step 6.16 (QD13): the birthday jobs go to the consumer's queue, so this
     // queue takes the consumer's prefix when one is set (the producer is off
     // otherwise, and the queue keeps shared-user's own prefix).

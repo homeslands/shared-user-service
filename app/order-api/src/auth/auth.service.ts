@@ -85,6 +85,7 @@ import { ZaloOaConnectorHistory } from 'src/zalo-oa-connector/entity/zalo-oa-con
 import { VerificationMethod } from './auth.constants';
 import { SharedBalanceService } from 'src/shared/services/shared-balance.service';
 import { UserRequirement } from 'src/user/user-requirement.entity';
+import { UserEventPublisher } from 'src/domain-events/user-event.publisher';
 import {
   UserRequirementKey,
   UserRequirementLevel,
@@ -130,6 +131,8 @@ export class AuthService {
     @InjectRepository(ZaloOaConnectorConfig)
     private readonly zaloOaConnectorConfigRepository: Repository<ZaloOaConnectorConfig>,
     private readonly sharedBalanceService: SharedBalanceService,
+    // Buoc 9.3: phat `user.created` sau khi tao user (ban-va-quen).
+    private readonly userEventPublisher: UserEventPublisher,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
     this.duration = this.configService.get<number>('DURATION');
@@ -1996,6 +1999,8 @@ export class AuthService {
 
     if (createdUser) {
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
+      // Buoc 9.3: user da commit o tren => bao `user.created` (ban-va-quen).
+      this.userEventPublisher.publishUserCreated(createdUser, 'register-otp');
     }
 
     const userWithRelations = await this.userRepository.findOne({
@@ -2103,8 +2108,11 @@ export class AuthService {
       },
     );
 
-    if (createdUser)
+    if (createdUser) {
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
+      // Buoc 9.3: user da commit o tren => bao `user.created` (ban-va-quen).
+      this.userEventPublisher.publishUserCreated(createdUser, 'register');
+    }
 
     return this.mapper.map(createdUser, User, RegisterAuthResponseDto);
   }

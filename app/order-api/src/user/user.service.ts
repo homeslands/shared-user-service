@@ -65,6 +65,10 @@ import ExcelJS from 'exceljs';
 import { TransactionManagerService } from 'src/db/transaction-manager.service';
 import { UserRequirement } from './user-requirement.entity';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  UserCreatedVia,
+  UserEventPublisher,
+} from 'src/domain-events/user-event.publisher';
 
 // Thong diep 409 cua POST /internal/users/import - ben goi phan biet trung
 // SDT voi trung email bang chinh chuoi nay. Co tinh KHONG dung khoa trong
@@ -95,6 +99,8 @@ export class UserService {
     private readonly logger: Logger,
     private readonly sharedBalanceService: SharedBalanceService,
     private readonly transactionManagerService: TransactionManagerService,
+    // Buoc 9.3: phat `user.created` sau khi tao user (ban-va-quen).
+    private readonly userEventPublisher: UserEventPublisher,
   ) {
     this.saltOfRounds = this.configService.get<number>('SALT_ROUNDS');
   }
@@ -531,6 +537,7 @@ export class UserService {
     await this.createUser(payload, RoleEnum.Admin, {
       role: defaultRole,
       ownerService: requestData.isShared ? null : callerService,
+      via: 'internal',
     });
 
     return this.findByPhonenumber(requestData.phonenumber);
@@ -839,7 +846,13 @@ export class UserService {
   async createUser(
     requestData: CreateUserRequestDto,
     createdRole: string,
-    options?: { role?: Role; ownerService?: string | null },
+    // `via`: duong tao, ghi vao event `user.created` (buoc 9.3). Mac dinh
+    // `admin` = `POST /user`; `createInternalUser` truyen `internal`.
+    options?: {
+      role?: Role;
+      ownerService?: string | null;
+      via?: UserCreatedVia;
+    },
   ) {
     const context = `${UserService.name}.${this.createUser.name}`;
 
@@ -919,6 +932,11 @@ export class UserService {
       );
       throw new UserException(UserValidation.ERROR_CREATE_USER);
     }
+
+    // Buoc 9.3: `save` o tren da xong (loi thi da nem) => bao `user.created`
+    // (ban-va-quen). Dung `user`, khong dung `createdUser` - bien nay khong
+    // bao gio duoc gan (BE-29, loi co tu truoc, ghi so khong sua).
+    this.userEventPublisher.publishUserCreated(user, options?.via ?? 'admin');
 
     if (createdUser)
       await this.sharedBalanceService.create({ userSlug: createdUser.slug });
